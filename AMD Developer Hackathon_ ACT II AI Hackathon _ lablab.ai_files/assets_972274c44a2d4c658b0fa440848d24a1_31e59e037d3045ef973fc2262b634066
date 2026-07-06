@@ -1,0 +1,20 @@
+<svg width="950" height="200" viewBox="0 0 950 200" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g clip-path="url(#clip0_3_1095)">
+<rect width="950" height="200" fill="#0F0F0F"/>
+<rect opacity="0.1" y="-27.1394" width="950" height="868.458" fill="url(#pattern0_3_1095)"/>
+<rect width="950" height="200" fill="url(#paint0_linear_3_1095)"/>
+</g>
+<defs>
+<pattern id="pattern0_3_1095" patternContentUnits="objectBoundingBox" width="0.0255037" height="0.0278983">
+<use xlink:href="#image0_3_1095" transform="scale(0.000439718 0.000481005)"/>
+</pattern>
+<linearGradient id="paint0_linear_3_1095" x1="475" y1="-53.7961" x2="475" y2="200" gradientUnits="userSpaceOnUse">
+<stop stop-color="#0F0F0F" stop-opacity="0"/>
+<stop offset="1" stop-color="#0F0F0F"/>
+</linearGradient>
+<clipPath id="clip0_3_1095">
+<rect width="950" height="200" fill="white"/>
+</clipPath>
+<image id="image0_3_1095" width="58" height="58" preserveAspectRatio="none" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADoAAAA6CAYAAADhu0ooAAAA8klEQVR4AeyWQQ7EIAwDt/v/P7cXkDgkEgXFkulwAYVGsT098P99ZGH0NNAQhahpAvy6puBS2RBNozG9gKgpuFQ2RNNoTC8gagoulS0nereVKiq6kBuNfdRXMVqfsXYCRLV510+DaH3G2gkQ1eZdPw2i9RlrJ2wTbU/X6a3bm25oH/a+1X3b6Opgdd+20evl6gZftl29b3XfNro6WN2HUXXi1fMgOiZ8whmiJ1AcPUB0TOOEM0RPoDh6kBPtb9xRhOIsN6owFc3AaJSKcw2izvQi7RCNUnGuQdSZXqTdiWikf7qG0emoTD6EqAmoaZmfIfoAAAD//6xxmxgAAAAGSURBVAMAWK1odeQw5gwAAAAASUVORK5CYII="/>
+</defs>
+</svg>

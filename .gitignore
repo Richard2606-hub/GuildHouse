@@ -1,0 +1,8 @@
+GuildHouse_Proposal.pdf
+AMD Developer Hackathon_ ACT II AI Hackathon _ lablab.ai.html
+node_modules/
+__pycache__/
+*.pyc
+.env
+frontend/dist/
+backend/data/ledger.jsonl
