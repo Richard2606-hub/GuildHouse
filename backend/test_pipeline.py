@@ -7,14 +7,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from engine.session import session_manager
 from engine.ledger import house_ledger
+from engine.loader import pack_loader
 
 async def test():
     print("--- GuildHouse Engine Pipeline Test ---")
     
+    # Initialize the packs directory
+    pack_loader.load_all_packs()
     house_ledger.log_boot(config_hash="test_mode")
     
-    session_id = session_manager.create_session()
+    # Create session with the loaded 'scamshield' pack
+    session_id = session_manager.create_session('scamshield')
     print(f"Created Session: {session_id}")
+
     
     # 1. Test High Confidence Request (Stays Local)
     prompt1 = "Hello, what is your name?"

@@ -3,6 +3,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import os
+import yaml
+
 from engine.session import session_manager
 from engine.ledger import house_ledger
 from engine.loader import pack_loader
@@ -33,6 +35,57 @@ async def get_packs():
 async def reload_packs():
     pack_loader.load_all_packs()
     return {"status": "success", "message": "Packs reloaded"}
+
+@app.get("/api/packs/{pack_name}")
+async def get_pack_raw(pack_name: str):
+    filename = f"{pack_name}.yaml"
+    filepath = os.path.join(pack_loader.packs_dir, filename)
+    if not os.path.exists(filepath):
+        # try .yml extension
+        filename = f"{pack_name}.yml"
+        filepath = os.path.join(pack_loader.packs_dir, filename)
+        if not os.path.exists(filepath):
+            raise HTTPException(status_code=404, detail="Pack file not found")
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+        return {"content": content, "filename": filename}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class SavePackRequest(BaseModel):
+    content: str
+
+@app.post("/api/packs/{pack_name}")
+async def save_pack(pack_name: str, request: SavePackRequest):
+    filename = f"{pack_name}.yaml"
+    filepath = os.path.join(pack_loader.packs_dir, filename)
+    
+    # Pre-validate YAML syntax
+    try:
+        data = yaml.safe_load(request.content)
+        if not data or 'name' not in data:
+            return {"status": "error", "message": "Invalid pack data: 'name' is a required root key."}
+    except Exception as e:
+        return {"status": "error", "message": f"YAML Syntax Error: {str(e)}"}
+        
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(request.content)
+            
+        # Hot-reload packs
+        pack_loader.load_all_packs()
+        
+        # Verify the pack loaded correctly
+        pack_id = pack_name.lower().replace(" ", "_")
+        loaded_pack = pack_loader.get_pack(pack_id)
+        if not loaded_pack:
+            return {"status": "quarantined", "message": "YAML saved, but engine quarantined the pack due to structural mismatch."}
+            
+        return {"status": "success", "message": "Pack saved and hot-reloaded successfully!", "pack": loaded_pack}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/ledger")
 async def get_ledger():
