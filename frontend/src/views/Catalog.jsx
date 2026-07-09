@@ -90,7 +90,7 @@ Section 3.2: Taxpayer Identification Number (TIN).
   }, []);
 
   const handleBrowseCorpus = (pack) => {
-    const key = pack.name.toLowerCase().replace(' ', '_');
+    const key = pack.name.toLowerCase().replaceAll(' ', '_');
     const files = mockCorpora[key] || [
       { 
         name: "default_corpus_guide.txt", 

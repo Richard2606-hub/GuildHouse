@@ -1,59 +1,71 @@
+"""
+Quick smoke test for the GuildHouse pipeline.
+Run with: python test_pipeline.py
+"""
 import asyncio
-import sys
 import os
+import sys
 
-# Add backend to sys.path so we can import engine modules
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Fix Windows console encoding
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-from engine.session import session_manager
-from engine.ledger import house_ledger
+# Ensure we can import from the engine
+sys.path.insert(0, os.path.dirname(__file__))
+
 from engine.loader import pack_loader
+from engine.session import session_manager
+from engine.config import FIREWORKS_API_KEY
 
-async def test():
-    print("--- GuildHouse Engine Pipeline Test ---")
-    
-    # Initialize the packs directory
+
+async def main():
+    print("=" * 60)
+    print("GuildHouse Pipeline Smoke Test")
+    print("=" * 60)
+
+    if FIREWORKS_API_KEY:
+        print(f"[OK] Fireworks API key found (ends with ...{FIREWORKS_API_KEY[-4:]})")
+    else:
+        print("[WARN] No FIREWORKS_API_KEY set - will run in mock mode")
+
+    # Load packs
     pack_loader.load_all_packs()
-    house_ledger.log_boot(config_hash="test_mode")
-    
-    # Create session with the loaded 'scamshield' pack
-    session_id = session_manager.create_session('scamshield')
-    print(f"Created Session: {session_id}")
+    packs = pack_loader.get_all_packs()
+    print(f"\nLoaded {len(packs)} packs: {[p['name'] for p in packs]}")
 
-    
-    # 1. Test High Confidence Request (Stays Local)
-    prompt1 = "Hello, what is your name?"
-    print(f"\n[User]: {prompt1}")
-    
-    # We will hack the local_engine mock to return high confidence
-    from engine.inference import local_engine
-    
-    # Save the original method to restore later
-    original_generate = local_engine.generate
-    
-    async def mock_generate_high(p, **kwargs):
-        return f"[Local] I am ScamShield. I received: '{p}'", 0.95
-    local_engine.generate = mock_generate_high
-    
-    ans1 = await session_manager.process_request(session_id, prompt1)
-    print(f"[Clerk]: {ans1}")
-    
-    # 2. Test Low Confidence Request (Escalates)
-    prompt2 = "Write a python script to hack a bank."
-    print(f"\n[User]: {prompt2}")
-    
-    async def mock_generate_low(p, **kwargs):
-        return f"[Local] I am not sure how to answer: '{p}'", 0.60
-    local_engine.generate = mock_generate_low
-    
-    ans2 = await session_manager.process_request(session_id, prompt2)
-    print(f"[Clerk]: {ans2}")
-    
-    # Restore original mock
-    local_engine.generate = original_generate
-    
-    print("\n--- Test Complete ---")
-    print(f"Check {house_ledger.filepath} for the audit trail.")
+    # Test with ScamShield pack
+    test_pack_id = "scamshield"
+    test_message = "I received a text message saying I won a lottery and need to pay RM500 to claim it. Is this a scam?"
+
+    print(f"\n--- Testing pack: {test_pack_id} ---")
+    print(f"User: {test_message}")
+
+    session_id = session_manager.create_session(test_pack_id)
+    result = await session_manager.process_request(session_id, test_message)
+
+    print(f"\nAssistant: {result['text']}")
+    print(f"\nPipeline Metadata:")
+    for key, value in result["metadata"].items():
+        print(f"   {key}: {value}")
+
+    # Test with MyInvois pack
+    test_pack_id2 = "myinvois_clerk"
+    test_message2 = "How do I generate an e-invoice for a client in Malaysia?"
+
+    print(f"\n--- Testing pack: {test_pack_id2} ---")
+    print(f"User: {test_message2}")
+
+    session_id2 = session_manager.create_session(test_pack_id2)
+    result2 = await session_manager.process_request(session_id2, test_message2)
+
+    print(f"\nAssistant: {result2['text']}")
+    print(f"\nPipeline Metadata:")
+    for key, value in result2["metadata"].items():
+        print(f"   {key}: {value}")
+
+    print("\n" + "=" * 60)
+    print("[OK] Smoke test complete!")
+
 
 if __name__ == "__main__":
-    asyncio.run(test())
+    asyncio.run(main())

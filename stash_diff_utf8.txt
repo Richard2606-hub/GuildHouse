@@ -1,0 +1,4987 @@
+﻿diff --git a/backend/engine/__init__.py b/backend/engine/__init__.py
+index 59d6e1c..0ab73c6 100644
+--- a/backend/engine/__init__.py
++++ b/backend/engine/__init__.py
+@@ -1 +1 @@
+-"""GuildHouse Runtime Engine Core"""
++"""GuildHouse Engine ΓÇö Pack-driven AI agent runtime."""
+diff --git a/backend/engine/gateway.py b/backend/engine/gateway.py
+index 98f7e93..d9ce67d 100644
+--- a/backend/engine/gateway.py
++++ b/backend/engine/gateway.py
+@@ -1,36 +1,151 @@
+-import os
+-import asyncio
++import httpx
++import json
++import re
+ from typing import Tuple
+ 
++from .config import (
++    FIREWORKS_API_KEY,
++    FIREWORKS_BASE_URL,
++    ESCALATION_MODEL,
++    JUDGE_MODEL,
++    ESCALATION_THRESHOLD,
++    DEFAULT_MAX_TOKENS,
++    DEFAULT_TEMPERATURE,
++    JUDGE_MAX_TOKENS,
++    JUDGE_TEMPERATURE,
++)
++
++
+ class EscalationGateway:
++    """
++    The Confidence Gate ΓÇö routes between cheap local-tier and expensive escalation-tier.
++    
++    Flow:
++    1. Receive the local model's draft
++    2. Ask a judge model to assess confidence (0.0 - 1.0)
++    3. If confidence < threshold, re-generate with the escalation model
++    4. Log token costs for the ledger
++    """
++
+     def __init__(self):
+-        self.api_key = os.getenv("FIREWORKS_API_KEY")
+-        self.is_configured = bool(self.api_key)
+-
+-    async def call_remote_model(self, prompt: str) -> str:
+-        """Call Fireworks AI chat completion."""
+-        if not self.is_configured:
+-            # Mock remote call
+-            await asyncio.sleep(1.5)
+-            return "[Mock Remote Escalation] I am the Fireworks API. The local model asked for help."
+-            
+-        # TODO: Implement actual httpx call to Fireworks AI
+-        raise NotImplementedError("Actual Fireworks API call not yet implemented.")
+-
+-    async def gate_request(self, local_draft: str, confidence: float, threshold: float = 0.90) -> Tuple[str, bool]:
++        self.escalation_model = ESCALATION_MODEL
++        self.judge_model = JUDGE_MODEL
++        self.threshold = ESCALATION_THRESHOLD
++        self.client = httpx.AsyncClient(
++            base_url=FIREWORKS_BASE_URL,
++            headers={
++                "Authorization": f"Bearer {FIREWORKS_API_KEY}",
++                "Content-Type": "application/json",
++            },
++            timeout=60.0,
++        )
++
++    async def assess_confidence(self, user_prompt: str, draft: str) -> float:
++        """
++        Ask a small model to rate how well the draft answers the prompt.
++        Returns a float 0.0ΓÇô1.0.
++        """
++        if not FIREWORKS_API_KEY:
++            return 0.85  # Mock confidence
++
++        judge_prompt = (
++            "You are a quality judge. Rate how well the following ANSWER addresses the USER QUESTION.\n"
++            "Consider: accuracy, completeness, helpfulness, and whether the answer stays in character.\n"
++            "Respond with ONLY a number between 0.0 and 1.0 (e.g., 0.85). Nothing else.\n\n"
++            f"USER QUESTION: {user_prompt}\n\n"
++            f"ANSWER: {draft}"
++        )
++
++        try:
++            response = await self.client.post(
++                "/chat/completions",
++                json={
++                    "model": self.judge_model,
++                    "messages": [{"role": "user", "content": judge_prompt}],
++                    "max_tokens": JUDGE_MAX_TOKENS,
++                    "temperature": JUDGE_TEMPERATURE,
++                },
++            )
++            response.raise_for_status()
++            data = response.json()
++            raw = data["choices"][0]["message"]["content"].strip()
++
++            # Extract float from response
++            match = re.search(r"(\d+\.?\d*)", raw)
++            if match:
++                score = float(match.group(1))
++                return min(max(score, 0.0), 1.0)  # Clamp to [0, 1]
++            return 0.5  # Default if parsing fails
++
++        except Exception as e:
++            print(f"[Gateway] Confidence assessment failed: {e}")
++            return 0.5  # Conservative default ΓÇö will likely trigger escalation
++
++    async def call_escalation_model(self, system_prompt: str, user_prompt: str, history: list = None) -> Tuple[str, int]:
++        """Call the larger escalation model for a higher-quality response."""
++        if not FIREWORKS_API_KEY:
++            return "[Mock Escalation] I am the expert model, called in to help.", 0
++
++        messages = []
++        if system_prompt:
++            messages.append({"role": "system", "content": system_prompt})
++
++        if history:
++            for turn in history[-6:]:
++                messages.append({"role": "user", "content": turn["user"]})
++                messages.append({"role": "assistant", "content": turn["assistant"]})
++
++        messages.append({"role": "user", "content": user_prompt})
++
++        try:
++            response = await self.client.post(
++                "/chat/completions",
++                json={
++                    "model": self.escalation_model,
++                    "messages": messages,
++                    "max_tokens": DEFAULT_MAX_TOKENS,
++                    "temperature": DEFAULT_TEMPERATURE,
++                },
++            )
++            response.raise_for_status()
++            data = response.json()
++
++            answer = data["choices"][0]["message"]["content"]
++            total_tokens = data.get("usage", {}).get("total_tokens", 0)
++            return answer, total_tokens
++
++        except httpx.HTTPStatusError as e:
++            error_detail = e.response.text if e.response else str(e)
++            return f"[Escalation Error] API returned {e.response.status_code}: {error_detail}", 0
++        except Exception as e:
++            return f"[Escalation Error] {type(e).__name__}: {str(e)}", 0
++
++    async def gate_request(
++        self,
++        local_draft: str,
++        user_prompt: str,
++        system_prompt: str = "",
++        history: list = None,
++    ) -> Tuple[str, bool, float, int]:
+         """
+         The Confidence Gate.
+-        If local confidence > threshold, return local draft.
+-        Otherwise, escalate.
+-        Returns (final_answer, escalated_boolean).
++        
++        Returns: (final_answer, was_escalated, confidence_score, escalation_tokens)
+         """
+-        if confidence >= threshold:
+-            return local_draft, False
+-            
+-        print(f"Confidence {confidence} below threshold {threshold}. Escalating to Gateway...")
+-        # In reality, we'd pass the original prompt, not just the draft, but this proves the gating concept.
+-        remote_answer = await self.call_remote_model("Help me answer this better.")
+-        return remote_answer, True
++        confidence = await self.assess_confidence(user_prompt, local_draft)
++
++        if confidence >= self.threshold:
++            return local_draft, False, confidence, 0
++
++        print(f"[Gateway] Confidence {confidence:.2f} < threshold {self.threshold}. Escalating...")
++        escalated_answer, escalation_tokens = await self.call_escalation_model(
++            system_prompt, user_prompt, history
++        )
++        return escalated_answer, True, confidence, escalation_tokens
++
++    async def close(self):
++        await self.client.aclose()
++
+ 
+ # Singleton instance
+ gateway = EscalationGateway()
+diff --git a/backend/engine/inference.py b/backend/engine/inference.py
+index af47d24..e13bff1 100644
+--- a/backend/engine/inference.py
++++ b/backend/engine/inference.py
+@@ -1,34 +1,142 @@
+-import asyncio
+-from typing import Dict, Any, Tuple
++import httpx
++import json
++from typing import Dict, Any, List, Tuple
++
++from .config import (
++    FIREWORKS_API_KEY,
++    FIREWORKS_BASE_URL,
++    LOCAL_MODEL,
++    DEFAULT_MAX_TOKENS,
++    DEFAULT_TEMPERATURE,
++)
++
+ 
+ class LocalEngine:
+-    def __init__(self, model_path: str = None):
+-        self.model_path = model_path
+-        self.is_loaded = False
+-        
+-    def load_model(self):
+-        """Placeholder for loading the GGUF model via llama-cpp-python or ROCm."""
+-        if self.model_path:
+-            print(f"Loading local model from {self.model_path}...")
+-            self.is_loaded = True
+-        else:
+-            print("No model path provided. Running in MOCK mode.")
+-            self.is_loaded = False
+-
+-    async def generate(self, prompt: str, **kwargs) -> Tuple[str, float]:
++    """
++    The 'resident clerk brain' ΓÇö uses a smaller, cheaper model via Fireworks AI.
++    In production with AMD GPU credits, this would run locally via llama-cpp-python + ROCm.
++    The architecture is the same either way: generate a draft, return with confidence.
++    """
++
++    def __init__(self):
++        self.model = LOCAL_MODEL
++        self.client = httpx.AsyncClient(
++            base_url=FIREWORKS_BASE_URL,
++            headers={
++                "Authorization": f"Bearer {FIREWORKS_API_KEY}",
++                "Content-Type": "application/json",
++            },
++            timeout=60.0,
++        )
++
++    def build_system_prompt(self, pack: Dict[str, Any]) -> str:
++        """Build a system prompt from the pack's persona and rules."""
++        persona = pack.get("persona", {})
++        rules = pack.get("rules", [])
++        languages = pack.get("languages", ["en"])
++
++        parts = []
++
++        # Identity
++        parts.append(f"You are '{pack.get('name', 'GuildHouse Clerk')}' ΓÇö {pack.get('description', 'a specialized AI assistant')}.")
++
++        # Voice & Stance
++        if persona:
++            voice = persona.get("voice", "")
++            stance = persona.get("stance", "")
++            if voice:
++                parts.append(f"Voice: {voice}")
++            if stance:
++                parts.append(f"Stance: {stance}")
++
++        # Rules
++        if rules:
++            rules_text = "\n".join(f"  - {r}" for r in rules)
++            parts.append(f"You MUST follow these rules:\n{rules_text}")
++
++        # Escalation policy
++        escalation = pack.get("escalation_policy", {})
++        forbidden = escalation.get("forbidden", [])
++        if forbidden:
++            parts.append(f"FORBIDDEN topics (refuse to answer): {', '.join(forbidden)}")
++
++        redact = escalation.get("redact_first", [])
++        if redact:
++            parts.append(f"Redact before processing: {', '.join(redact)}")
++
++        # Languages
++        if languages:
++            parts.append(f"Supported languages: {', '.join(languages)}. Respond in the language the user uses.")
++
++        # Tool awareness
++        tools = pack.get("tools", [])
++        if tools:
++            parts.append(f"You have access to these tools: {', '.join(tools)}. Reference them when relevant.")
++
++        return "\n\n".join(parts)
++
++    async def generate(
++        self,
++        prompt: str,
++        pack: Dict[str, Any] = None,
++        history: List[Dict[str, str]] = None,
++    ) -> Tuple[str, int]:
+         """
+-        Generate a response locally.
+-        Returns a tuple of (response_text, confidence_score).
++        Generate a response using the local-tier (cheap) model.
++        Returns (response_text, prompt_tokens_used).
+         """
+-        if not self.is_loaded:
+-            # Mock response for development
+-            await asyncio.sleep(1) # Simulate inference delay
+-            confidence = 0.85 # Mock confidence
+-            mock_response = f"[Mock Local Answer] I am the resident model. I received your prompt of length {len(prompt)}."
+-            return mock_response, confidence
+-            
+-        # TODO: Implement actual llama_cpp generation here
+-        raise NotImplementedError("Actual inference not yet implemented.")
++        if not FIREWORKS_API_KEY:
++            # Fallback mock for development without API key
++            return (
++                f"[Mock ΓÇö No API Key] I am '{pack.get('name', 'Clerk')}'. "
++                f"I received your message: '{prompt[:80]}...'",
++                0,
++            )
++
++        messages = []
++
++        # System prompt from pack
++        if pack:
++            messages.append({"role": "system", "content": self.build_system_prompt(pack)})
++
++        # Conversation history
++        if history:
++            for turn in history[-6:]:  # Keep last 6 turns to manage context window
++                messages.append({"role": "user", "content": turn["user"]})
++                messages.append({"role": "assistant", "content": turn["assistant"]})
++
++        # Current user message
++        messages.append({"role": "user", "content": prompt})
++
++        try:
++            response = await self.client.post(
++                "/chat/completions",
++                json={
++                    "model": self.model,
++                    "messages": messages,
++                    "max_tokens": DEFAULT_MAX_TOKENS,
++                    "temperature": DEFAULT_TEMPERATURE,
++                },
++            )
++            response.raise_for_status()
++            data = response.json()
++
++            answer = data["choices"][0]["message"]["content"]
++            prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
++            completion_tokens = data.get("usage", {}).get("completion_tokens", 0)
++            total_tokens = prompt_tokens + completion_tokens
++
++            return answer, total_tokens
++
++        except httpx.HTTPStatusError as e:
++            error_detail = e.response.text if e.response else str(e)
++            return f"[Local Engine Error] API returned {e.response.status_code}: {error_detail}", 0
++        except Exception as e:
++            return f"[Local Engine Error] {type(e).__name__}: {str(e)}", 0
++
++    async def close(self):
++        await self.client.aclose()
++
+ 
+ # Singleton instance
+ local_engine = LocalEngine()
+diff --git a/backend/engine/ledger.py b/backend/engine/ledger.py
+index e54cca5..042232e 100644
+--- a/backend/engine/ledger.py
++++ b/backend/engine/ledger.py
+@@ -38,5 +38,25 @@ class Ledger:
+     def log_escalation(self, session_id: str, rule: str, cost: float):
+         self._append("escalation", {"session_id": session_id, "rule": rule, "estimated_cost": cost})
+ 
++    def log_tool_invoked(self, session_id: str, tool_name: str, status: str = "success"):
++        self._append("tool_invoked", {
++            "session_id": session_id,
++            "tool_name": tool_name,
++            "status": status
++        })
++
++    def log_verdict(self, session_id: str, pack_name: str, total_tokens: int, escalated: bool):
++        self._append("verdict", {
++            "session_id": session_id,
++            "pack_name": pack_name,
++            "total_tokens": total_tokens,
++            "escalated": escalated
++        })
++
++    def clear(self):
++        """Clear the ledger file."""
++        with open(self.filepath, "w", encoding="utf-8") as f:
++            f.write("")
++
+ # Global instance for the runtime
+ house_ledger = Ledger()
+diff --git a/backend/engine/persona.py b/backend/engine/persona.py
+index 0833a99..08ab961 100644
+--- a/backend/engine/persona.py
++++ b/backend/engine/persona.py
+@@ -1,32 +1,43 @@
+ from typing import Dict, Any
+ 
++
+ class PersonaEngine:
++    """
++    Persona rendering layer.
++    
++    Since the persona voice is now baked into the system prompt during generation
++    (see inference.py build_system_prompt), this layer handles:
++    - Formatting the final output
++    - Adding clerk identity markers for the UI
++    - Ensuring persona metadata is attached for the Inspector view
++    """
++
+     def __init__(self):
+         pass
+ 
+     def render(self, raw_draft: str, pack: Dict[str, Any]) -> str:
+         """
+-        Takes the raw factual draft and renders it in the voice of the clerk.
++        Final rendering pass. The LLM already speaks in the persona's voice
++        (enforced via system prompt), so this layer just formats the output.
+         """
+-        persona = pack.get("persona", {})
+-        if not persona:
++        if not pack:
+             return raw_draft
+ 
+-        voice = persona.get("voice", "Standard Assistant")
+-        stance = persona.get("stance", "Helpful")
+-        
+-        # MOCK PERSONA RENDERING
+-        # In a real scenario, this would be a second pass through the local LLM (Gemma) 
+-        # using the persona profile as the system prompt to rewrite the text.
+-        
+-        rendered = f"""
+-*** {pack.get('name', 'Clerk')} ***
+-[Voice: {voice}]
+-[Stance: {stance}]
+-
+-{raw_draft}
+-"""
+-        return rendered.strip()
++        # Clean up any leading/trailing whitespace
++        rendered = raw_draft.strip()
++
++        return rendered
++
++    def get_persona_metadata(self, pack: Dict[str, Any]) -> Dict[str, str]:
++        """Extract persona metadata for the frontend Inspector view."""
++        persona = pack.get("persona", {})
++        return {
++            "clerk_name": pack.get("name", "Unknown Clerk"),
++            "voice": persona.get("voice", "Standard"),
++            "stance": persona.get("stance", "Neutral"),
++            "description": pack.get("description", ""),
++        }
++
+ 
+ # Global instance
+ persona_engine = PersonaEngine()
+diff --git a/backend/engine/rules.py b/backend/engine/rules.py
+index 628713d..738d6de 100644
+--- a/backend/engine/rules.py
++++ b/backend/engine/rules.py
+@@ -1,28 +1,115 @@
+-from typing import Dict, Any
++import re
++from typing import Dict, Any, List
++
+ 
+ class RulesEngine:
++    """
++    Post-generation validation engine.
++    Checks the LLM's output against the pack's deterministic constraints:
++    - Forbidden topic detection
++    - Redaction enforcement
++    - Custom rule compliance signals
++    """
++
++    # Common patterns for forbidden topic categories
++    FORBIDDEN_PATTERNS = {
++        "financial_advice": [
++            r"\b(you should invest|buy this stock|financial recommendation|guaranteed return)\b",
++        ],
++        "legal_advice": [
++            r"\b(legal advice|you should sue|file a lawsuit|legally you must)\b",
++        ],
++        "minors_data": [
++            r"\b(child('s)? (name|address|school)|minor('s)? personal)\b",
++        ],
++        "institutional_material": [
++            r"\b(copyrighted lecture|proprietary course material)\b",
++        ],
++    }
++
++    # Patterns for data that should be redacted
++    REDACTION_PATTERNS = {
++        "financial_data": [
++            (r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b", "[REDACTED-CARD]"),  # Credit card
++            (r"\b\d{10,12}\b", "[REDACTED-ACCOUNT]"),  # Account numbers
++        ],
++        "tax_ids": [
++            (r"\b\d{2}-\d{7}\b", "[REDACTED-TAX-ID]"),  # Tax IDs (XX-XXXXXXX)
++            (r"\b\d{3}-\d{2}-\d{4}\b", "[REDACTED-SSN]"),  # SSN format
++        ],
++        "phone_numbers": [
++            (r"\b(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b", "[REDACTED-PHONE]"),
++        ],
++        "addresses": [
++            (r"\b\d{1,5}\s\w+\s(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln)\b",
++             "[REDACTED-ADDRESS]"),
++        ],
++    }
++
+     def __init__(self):
+         pass
+ 
++    def check_forbidden_topics(self, draft: str, pack: Dict[str, Any]) -> List[str]:
++        """Check if the draft contains forbidden topic patterns. Returns list of violations."""
++        escalation = pack.get("escalation_policy", {})
++        forbidden = escalation.get("forbidden", [])
++        violations = []
++
++        for topic in forbidden:
++            patterns = self.FORBIDDEN_PATTERNS.get(topic, [])
++            for pattern in patterns:
++                if re.search(pattern, draft, re.IGNORECASE):
++                    violations.append(topic)
++                    break
++
++        return violations
++
++    def apply_redactions(self, draft: str, pack: Dict[str, Any]) -> str:
++        """Redact sensitive data patterns specified in the pack's escalation policy."""
++        escalation = pack.get("escalation_policy", {})
++        redact_categories = escalation.get("redact_first", [])
++
++        for category in redact_categories:
++            patterns = self.REDACTION_PATTERNS.get(category, [])
++            for pattern, replacement in patterns:
++                draft = re.sub(pattern, replacement, draft, flags=re.IGNORECASE)
++
++        return draft
++
+     def apply_rules(self, draft: str, pack: Dict[str, Any]) -> str:
+         """
+-        Validate deterministic constraints from the pack.
+-        If validation fails, it generates an in-character refusal or redraft.
++        Full validation pipeline:
++        1. Check forbidden topics ΓåÆ refuse if violated
++        2. Apply redactions
++        3. Return validated/cleaned draft
+         """
+-        rules = pack.get("rules", [])
+-        if not rules:
++        if not pack:
+             return draft
+ 
+-        # MOCK VALIDATION LOGIC
+-        # In a real scenario, this would use Pydantic/Instructor to validate structured JSON against schemas.
+-        # For the prototype, we simply prepend an acknowledgment that rules were enforced.
+-        
+-        # Simulated "failure" catch:
+-        if "Missing fields" in draft:
+-            return f"[Validation Failed] I need more information to proceed. Required fields: {pack.get('missing_fields_expected', 'Unknown')}"
+-            
+-        rule_summary = f"[Rules Enforced: {len(rules)} checks passed] "
+-        return rule_summary + draft
++        # 1. Forbidden topic check
++        violations = self.check_forbidden_topics(draft, pack)
++        if violations:
++            clerk_name = pack.get("name", "Clerk")
++            return (
++                f"I'm sorry, but as {clerk_name}, I'm not able to provide information on "
++                f"{', '.join(violations).replace('_', ' ')}. "
++                f"This falls outside my authorized scope. "
++                f"Please consult the appropriate professional for this matter."
++            )
++
++        # 2. Redaction pass
++        draft = self.apply_redactions(draft, pack)
++
++        # 3. Rule count acknowledgment (for ledger/debugging transparency)
++        rules = pack.get("rules", [])
++        rule_count = len(rules)
++        if rule_count > 0:
++            # Add a subtle metadata marker (not visible to end users in production,
++            # but useful for the Inspector/Ledger view)
++            draft = draft.rstrip()
++
++        return draft
++
+ 
+ # Global instance
+ rules_engine = RulesEngine()
+diff --git a/backend/engine/session.py b/backend/engine/session.py
+index 4dd289a..83b3f4d 100644
+--- a/backend/engine/session.py
++++ b/backend/engine/session.py
+@@ -1,66 +1,154 @@
+ import uuid
++from typing import Dict, Any
++
+ from .ledger import house_ledger
+ from .inference import local_engine
+ from .gateway import gateway
+ from .loader import pack_loader
+ from .rules import rules_engine
+ from .persona import persona_engine
++from .tools import tools_registry
++from .retrieval import retrieval_engine
++
+ 
+ class SessionManager:
+     def __init__(self):
+-        self.sessions = {}
++        self.sessions: Dict[str, Dict[str, Any]] = {}
+ 
+     def create_session(self, pack_id: str) -> str:
+         session_id = str(uuid.uuid4())
+         pack = pack_loader.get_pack(pack_id)
+-        version = pack.get('version', 'unknown') if pack else 'unknown'
+-        
++        version = pack.get("version", "unknown") if pack else "unknown"
++
+         self.sessions[session_id] = {
+             "pack_id": pack_id,
+             "history": [],
+-            "state": "active"
++            "state": "active",
+         }
+         house_ledger.log_session_start(session_id, pack_version=version)
+         return session_id
+ 
+-    async def process_request(self, session_id: str, prompt: str) -> str:
++    def _detect_tool_intent(self, message: str, pack: Dict[str, Any]) -> str:
++        """Detect if the user's message implies a tool should be used."""
++        tools = pack.get("tools", [])
++        msg_lower = message.lower()
++
++        if "ocr" in tools and any(kw in msg_lower for kw in ["scan", "extract text", "read document", "ocr", "receipt"]):
++            return "ocr"
++        if "vision" in tools and any(kw in msg_lower for kw in ["image", "picture", "photo", "screenshot", "look at", "analyze image"]):
++            return "vision"
++        if "media_pipeline" in tools and any(kw in msg_lower for kw in ["video", "lecture", "recording", "media", "watch", "transcript"]):
++            return "media_pipeline"
++
++        return ""
++
++    async def process_request(self, session_id: str, prompt: str) -> Dict[str, Any]:
+         """
+-        The core pipeline: 
+-        1. Log request
+-        2. Local Draft -> Gate -> Escalate (if needed)
+-        3. Rules Validation
+-        4. Persona Rendering
+-        5. Log verdict
++        The complete GuildHouse pipeline:
++
++        1. Load pack context
++        2. Detect tool intent, execute if needed
++        3. Local Draft (cheap model via Fireworks AI)
++        4. Confidence Gate -> Escalate if needed (expensive model)
++        5. Rules Validation (forbidden topics, redaction)
++        6. Persona Rendering
++        7. Log everything to the Ledger
+         """
+         session_data = self.sessions.get(session_id)
+         if not session_data:
+-            return "Error: Invalid session."
++            return {"text": "Error: Invalid session.", "metadata": {}}
+ 
+-        pack = pack_loader.get_pack(session_data["pack_id"])
++        pack_id = session_data["pack_id"]
++        pack = pack_loader.get_pack(pack_id)
+         if not pack:
+-            return "Error: Pack not loaded."
++            return {"text": "Error: Pack not loaded.", "metadata": {}}
+ 
++        history = session_data.get("history", [])
++
++        # Log the incoming request
+         house_ledger.log_request(session_id, prompt)
+ 
+-        # 1. Local Draft
+-        local_draft, confidence = await local_engine.generate(prompt)
+-        house_ledger.log_local_draft(session_id, len(prompt), len(local_draft), confidence)
++        # --- Step 0: Tool Detection ---
++        tool_context = ""
++        tool_used = ""
++        detected_tool = self._detect_tool_intent(prompt, pack)
++        if detected_tool:
++            tool_result = await tools_registry.execute_tool(detected_tool, prompt, pack)
++            tool_context = f"\n\n[Tool Result from {detected_tool}]: {tool_result}"
++            tool_used = detected_tool
++            house_ledger.log_tool_invoked(session_id, detected_tool)
++
++        # --- Step 0.5: Knowledge Retrieval (Fact Locking) ---
++        retrieved_passages = retrieval_engine.retrieve(pack_id, prompt, top_k=2)
++        retrieval_context = ""
++        if retrieved_passages:
++            retrieval_context = "\n\n[Retrieved Context from Corpus]:\n" + "\n---\n".join(retrieved_passages)
++
++        # --- Step 1: Local Draft (cheap model) ---
++        enhanced_prompt = prompt + tool_context + retrieval_context
++        local_draft, local_tokens = await local_engine.generate(
++            prompt=enhanced_prompt,
++            pack=pack,
++            history=history,
++        )
++
++        # --- Step 2: Confidence Gate -> Escalation ---
++        system_prompt = local_engine.build_system_prompt(pack)
++        final_answer, escalated, confidence, escalation_tokens = await gateway.gate_request(
++            local_draft=local_draft,
++            user_prompt=prompt,
++            system_prompt=system_prompt,
++            history=history,
++        )
++
++        house_ledger.log_local_draft(session_id, local_tokens, escalation_tokens, confidence)
+ 
+-        # 2. Gate & Escalate
+-        final_answer, escalated = await gateway.gate_request(local_draft, confidence)
+         if escalated:
+-            house_ledger.log_escalation(session_id, "low_confidence", 0.05)
++            house_ledger.log_escalation(session_id, "low_confidence", escalation_tokens)
+ 
+-        # 3. Rules Validation
++        # --- Step 3: Rules Validation ---
+         validated_answer = rules_engine.apply_rules(final_answer, pack)
+ 
+-        # 4. Persona Rendering
++        # --- Step 4: Persona Rendering ---
+         rendered_answer = persona_engine.render(validated_answer, pack)
+ 
+-        # Update session history
+-        self.sessions[session_id]["history"].append({"user": prompt, "assistant": rendered_answer})
++        # --- Step 5: Update session history ---
++        session_data["history"].append({
++            "user": prompt,
++            "assistant": rendered_answer,
++        })
++
++        # --- Step 6: Log verdict ---
++        total_tokens = local_tokens + escalation_tokens
++        house_ledger.log_verdict(session_id, pack.get("name", "Unknown"), total_tokens, escalated)
++
++        # Build pipeline metadata for the frontend Inspector
++        metadata = {
++            "pack_name": pack.get("name", "Unknown"),
++            "local_tokens": local_tokens,
++            "escalated": escalated,
++            "confidence": round(confidence, 3),
++            "escalation_tokens": escalation_tokens,
++            "total_tokens": total_tokens,
++            "rules_applied": len(pack.get("rules", [])),
++            "tool_used": tool_used,
++            "persona": persona_engine.get_persona_metadata(pack),
++        }
++
++        return {"text": rendered_answer, "metadata": metadata}
++
++    def get_session_info(self, session_id: str) -> Dict[str, Any]:
++        """Get session information."""
++        data = self.sessions.get(session_id)
++        if not data:
++            return {}
++        return {
++            "session_id": session_id,
++            "pack_id": data["pack_id"],
++            "message_count": len(data["history"]),
++            "state": data["state"],
++        }
+ 
+-        return rendered_answer
+ 
+ # Global instance
+ session_manager = SessionManager()
+diff --git a/backend/engine/tools.py b/backend/engine/tools.py
+index 1feb4eb..a0f73c2 100644
+--- a/backend/engine/tools.py
++++ b/backend/engine/tools.py
+@@ -1,32 +1,108 @@
+-from typing import Dict, Any, List
++import httpx
++from typing import Dict, Any
++
++from .config import (
++    FIREWORKS_API_KEY,
++    FIREWORKS_BASE_URL,
++    LOCAL_MODEL,
++)
++
+ 
+ class ToolsRegistry:
++    """
++    GuildHouse Tool System ΓÇö provides specialized capabilities to clerks.
++    Tools are granted per-pack via the YAML manifest.
++    Uses the LLM to provide intelligent tool-like responses.
++    """
++
+     def __init__(self):
+-        self.available_tools = {
+-            "ocr": self._mock_ocr,
+-            "vision": self._mock_vision,
+-            "media_pipeline": self._mock_media_pipeline
++        self.tool_descriptions = {
++            "ocr": "Optical Character Recognition ΓÇö extracts text from images and documents",
++            "vision": "Visual Analysis ΓÇö identifies objects, text, and patterns in images",
++            "media_pipeline": "Media Processing ΓÇö extracts keyframes, generates transcripts from video/audio",
+         }
++        self.client = httpx.AsyncClient(
++            base_url=FIREWORKS_BASE_URL,
++            headers={
++                "Authorization": f"Bearer {FIREWORKS_API_KEY}",
++                "Content-Type": "application/json",
++            },
++            timeout=30.0,
++        )
+ 
+-    async def execute_tool(self, tool_name: str, payload: Any, pack: Dict[str, Any]) -> str:
++    async def execute_tool(self, tool_name: str, context: str, pack: Dict[str, Any]) -> str:
+         """Execute a tool if the pack has the grant."""
+         grants = pack.get("tools", [])
+         if tool_name not in grants:
+-            return f"[Tool Error] Access Denied: Clerk does not have grant for '{tool_name}'."
+-        
+-        if tool_name not in self.available_tools:
+-            return f"[Tool Error] Tool '{tool_name}' not found on house hardware."
++            return f"[Tool Denied] Clerk does not have grant for '{tool_name}'."
+ 
+-        return await self.available_tools[tool_name](payload)
++        if tool_name not in self.tool_descriptions:
++            return f"[Tool Error] Tool '{tool_name}' not found."
+ 
+-    async def _mock_ocr(self, payload):
+-        return "[OCR Result] Extracted text: 'Urgent: Your parcel is delayed. Click here to pay customs fee.'"
++        if not FIREWORKS_API_KEY:
++            return self._mock_tool(tool_name, context)
+ 
+-    async def _mock_vision(self, payload):
+-        return "[Vision Result] Identified elements: Receipt from Store X, Total: $45.00."
++        # Use LLM to simulate intelligent tool behavior
++        tool_prompt = self._build_tool_prompt(tool_name, context, pack)
++        try:
++            response = await self.client.post(
++                "/chat/completions",
++                json={
++                    "model": LOCAL_MODEL,
++                    "messages": [{"role": "user", "content": tool_prompt}],
++                    "max_tokens": 512,
++                    "temperature": 0.3,
++                },
++            )
++            response.raise_for_status()
++            data = response.json()
++            return data["choices"][0]["message"]["content"]
++        except Exception as e:
++            return f"[Tool Error] {tool_name} failed: {str(e)}"
++
++    def _build_tool_prompt(self, tool_name: str, context: str, pack: Dict[str, Any]) -> str:
++        """Build a prompt that simulates tool behavior."""
++        prompts = {
++            "ocr": (
++                f"You are an OCR tool for '{pack.get('name', 'Clerk')}'. "
++                f"The user has submitted content for text extraction. "
++                f"Based on the following context, generate realistic OCR output "
++                f"with extracted fields, text blocks, and confidence levels.\n\n"
++                f"Context: {context}"
++            ),
++            "vision": (
++                f"You are a computer vision analysis tool for '{pack.get('name', 'Clerk')}'. "
++                f"Analyze the described visual content and provide structured findings: "
++                f"identified elements, classifications, and confidence scores.\n\n"
++                f"Context: {context}"
++            ),
++            "media_pipeline": (
++                f"You are a media processing pipeline for '{pack.get('name', 'Clerk')}'. "
++                f"Process the described media content and generate: "
++                f"keyframe descriptions, transcript segments, and content summary.\n\n"
++                f"Context: {context}"
++            ),
++        }
++        return prompts.get(tool_name, f"Process this with {tool_name}: {context}")
++
++    def _mock_tool(self, tool_name: str, context: str) -> str:
++        """Fallback mock responses when no API key is set."""
++        mocks = {
++            "ocr": "[OCR Result] Extracted text from document. Fields identified: Date, Amount, Reference Number.",
++            "vision": "[Vision Result] Image analysis complete. Objects identified with confidence scores.",
++            "media_pipeline": "[Media Pipeline] Video processed. Keyframes extracted, transcript generated.",
++        }
++        return mocks.get(tool_name, f"[{tool_name}] Processing complete.")
++
++    def get_available_tools(self, pack: Dict[str, Any]) -> list:
++        """Get list of tools available to a pack with descriptions."""
++        grants = pack.get("tools", [])
++        return [
++            {"name": t, "description": self.tool_descriptions.get(t, "")}
++            for t in grants
++            if t in self.tool_descriptions
++        ]
+ 
+-    async def _mock_media_pipeline(self, payload):
+-        return "[Media Pipeline] Keyframes extracted. Transcript generated: 'Welcome to Advanced Physics...'"
+ 
+ # Global instance
+ tools_registry = ToolsRegistry()
+diff --git a/backend/main.py b/backend/main.py
+index ca0849f..1315bb4 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -1,70 +1,229 @@
+ from fastapi import FastAPI, HTTPException
+ from fastapi.responses import FileResponse
+ from fastapi.staticfiles import StaticFiles
++from fastapi.middleware.cors import CORSMiddleware
+ from pydantic import BaseModel
++from typing import Optional
+ import os
++import yaml
++import json
++
++from engine.config import FIREWORKS_API_KEY
+ from engine.session import session_manager
+ from engine.ledger import house_ledger
+ from engine.loader import pack_loader
++from engine.tools import tools_registry
+ 
+ app = FastAPI(title="GuildHouse Runtime Core")
+ 
++# CORS
++app.add_middleware(
++    CORSMiddleware,
++    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
++    allow_credentials=True,
++    allow_methods=["*"],
++    allow_headers=["*"],
++)
++
++
+ class ChatRequest(BaseModel):
+     pack_id: str
+-    session_id: str = None
++    session_id: Optional[str] = None
+     message: str
+ 
++
++
++class PackCreateRequest(BaseModel):
++    filename: str
++    content: str
++
++
++class PackUpdateRequest(BaseModel):
++    content: str
++
++
++PACKS_DIR = os.path.join(os.path.dirname(__file__), "packs")
++FRONTEND_DIST_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
++
++
+ @app.on_event("startup")
+ async def startup_event():
+     pack_loader.load_all_packs()
+     house_ledger.log_boot()
++    if FIREWORKS_API_KEY:
++        print("[OK] Fireworks AI API key configured")
++    else:
++        print("[WARN] No FIREWORKS_API_KEY - running in mock mode")
+ 
+-FRONTEND_DIST_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
++
++# ΓöÇΓöÇ Health ΓöÇΓöÇ
+ 
+ @app.get("/api/health")
+ async def health_check():
+-    return {"status": "healthy", "service": "GuildHouse Core"}
++    return {
++        "status": "healthy",
++        "service": "GuildHouse Core",
++        "fireworks_configured": bool(FIREWORKS_API_KEY),
++        "packs_loaded": len(pack_loader.get_all_packs()),
++    }
++
++
++# ΓöÇΓöÇ Packs ΓöÇΓöÇ
+ 
+ @app.get("/api/packs")
+ async def get_packs():
+     return {"packs": pack_loader.get_all_packs()}
+ 
++
++@app.get("/api/packs/{pack_id}")
++async def get_pack(pack_id: str):
++    pack = pack_loader.get_pack(pack_id)
++    if not pack:
++        raise HTTPException(status_code=404, detail="Pack not found")
++    return pack
++
++
++@app.get("/api/packs/{pack_id}/source")
++async def get_pack_source(pack_id: str):
++    """Return raw YAML source for the Pack Studio editor."""
++    # Search for the pack file
++    for filename in os.listdir(PACKS_DIR):
++        if filename.endswith(".yaml") or filename.endswith(".yml"):
++            filepath = os.path.join(PACKS_DIR, filename)
++            with open(filepath, "r", encoding="utf-8") as f:
++                content = f.read()
++                data = yaml.safe_load(content)
++                file_pack_id = data.get("name", "").lower().replace(" ", "_")
++                if file_pack_id == pack_id:
++                    return {"filename": filename, "content": content, "pack_id": pack_id}
++
++    raise HTTPException(status_code=404, detail="Pack source not found")
++
++
++@app.post("/api/packs")
++async def create_pack(request: PackCreateRequest):
++    """Create a new pack from YAML content."""
++    filename = request.filename
++    if not filename.endswith(".yaml"):
++        filename += ".yaml"
++
++    filepath = os.path.join(PACKS_DIR, filename)
++    if os.path.exists(filepath):
++        raise HTTPException(status_code=409, detail="Pack file already exists")
++
++    # Validate YAML
++    try:
++        data = yaml.safe_load(request.content)
++        if not data.get("name"):
++            raise HTTPException(status_code=400, detail="Pack must have a 'name' field")
++    except yaml.YAMLError as e:
++        raise HTTPException(status_code=400, detail=f"Invalid YAML: {str(e)}")
++
++    with open(filepath, "w", encoding="utf-8") as f:
++        f.write(request.content)
++
++    pack_loader.load_all_packs()
++    return {"status": "created", "filename": filename}
++
++
++@app.put("/api/packs/{pack_id}")
++async def update_pack(pack_id: str, request: PackUpdateRequest):
++    """Update an existing pack's YAML content."""
++    # Validate YAML
++    try:
++        data = yaml.safe_load(request.content)
++        if not data.get("name"):
++            raise HTTPException(status_code=400, detail="Pack must have a 'name' field")
++    except yaml.YAMLError as e:
++        raise HTTPException(status_code=400, detail=f"Invalid YAML: {str(e)}")
++
++    # Find the pack file
++    for filename in os.listdir(PACKS_DIR):
++        if filename.endswith((".yaml", ".yml")):
++            filepath = os.path.join(PACKS_DIR, filename)
++            with open(filepath, "r", encoding="utf-8") as f:
++                existing = yaml.safe_load(f.read())
++                file_pack_id = existing.get("name", "").lower().replace(" ", "_")
++                if file_pack_id == pack_id:
++                    with open(filepath, "w", encoding="utf-8") as wf:
++                        wf.write(request.content)
++                    pack_loader.load_all_packs()
++                    return {"status": "updated", "pack_id": pack_id}
++
++    raise HTTPException(status_code=404, detail="Pack not found")
++
++
++@app.delete("/api/packs/{pack_id}")
++async def delete_pack(pack_id: str):
++    """Delete a pack."""
++    for filename in os.listdir(PACKS_DIR):
++        if filename.endswith((".yaml", ".yml")):
++            filepath = os.path.join(PACKS_DIR, filename)
++            with open(filepath, "r", encoding="utf-8") as f:
++                existing = yaml.safe_load(f.read())
++                file_pack_id = existing.get("name", "").lower().replace(" ", "_")
++                if file_pack_id == pack_id:
++                    os.remove(filepath)
++                    pack_loader.load_all_packs()
++                    return {"status": "deleted", "pack_id": pack_id}
++
++    raise HTTPException(status_code=404, detail="Pack not found")
++
++
+ @app.post("/api/packs/reload")
+ async def reload_packs():
+     pack_loader.load_all_packs()
+-    return {"status": "success", "message": "Packs reloaded"}
++    return {"status": "success", "count": len(pack_loader.get_all_packs())}
+ 
+-@app.get("/api/ledger")
+-async def get_ledger():
+-    import json
+-    try:
+-        with open(house_ledger.filepath, "r", encoding="utf-8") as f:
+-            lines = [line.strip() for line in f.readlines() if line.strip()]
+-            return {"events": [json.loads(line) for line in lines]}
+-    except Exception as e:
+-        return {"error": str(e)}
++
++# ΓöÇΓöÇ Chat ΓöÇΓöÇ
+ 
+ @app.post("/api/chat")
+ async def chat(request: ChatRequest):
+     session_id = request.session_id
+     if not session_id:
+         session_id = session_manager.create_session(request.pack_id)
+-        
++
+     try:
+-        response_text = await session_manager.process_request(session_id, request.message)
+-        return {"session_id": session_id, "response": response_text}
++        result = await session_manager.process_request(session_id, request.message)
++        return {
++            "session_id": session_id,
++            "response": result["text"],
++            "metadata": result["metadata"],
++        }
+     except Exception as e:
+         raise HTTPException(status_code=500, detail=str(e))
+ 
+-# Mount the static directory if it exists, otherwise it will fail to start
++
++# ΓöÇΓöÇ Ledger ΓöÇΓöÇ
++
++@app.get("/api/ledger")
++async def get_ledger():
++    try:
++        with open(house_ledger.filepath, "r", encoding="utf-8") as f:
++            lines = [line.strip() for line in f.readlines() if line.strip()]
++            return {"events": [json.loads(line) for line in lines]}
++    except FileNotFoundError:
++        return {"events": []}
++    except Exception as e:
++        return {"events": [], "error": str(e)}
++
++
++@app.post("/api/ledger/clear")
++async def clear_ledger():
++    house_ledger.clear()
++    return {"status": "cleared"}
++
++
++# ΓöÇΓöÇ Static files ΓöÇΓöÇ
++
+ if os.path.isdir(FRONTEND_DIST_DIR):
+     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST_DIR, "assets")), name="assets")
+ 
+-# Catch-all route to serve the React SPA index.html
++
+ @app.get("/{full_path:path}")
+ async def serve_spa(full_path: str):
+     index_path = os.path.join(FRONTEND_DIST_DIR, "index.html")
+     if os.path.isfile(index_path):
+         return FileResponse(index_path)
+-    return {"error": "Frontend build not found. Please run 'npm run build' in the frontend directory."}
+-
++    return {"message": "GuildHouse API is running. Frontend at http://localhost:5173"}
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index a30162b..fac6ba3 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -1,4 +1,5 @@
+ fastapi
+-uvicorn[standard]
+-pydantic
++uvicorn
+ pyyaml
++httpx
++python-dotenv
+diff --git a/backend/test_pipeline.py b/backend/test_pipeline.py
+index 598cbfa..1a602f3 100644
+--- a/backend/test_pipeline.py
++++ b/backend/test_pipeline.py
+@@ -1,54 +1,71 @@
++"""
++Quick smoke test for the GuildHouse pipeline.
++Run with: python test_pipeline.py
++"""
+ import asyncio
+-import sys
+ import os
++import sys
++
++# Fix Windows console encoding
++if sys.platform == 'win32':
++    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+ 
+-# Add backend to sys.path so we can import engine modules
+-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++# Ensure we can import from the engine
++sys.path.insert(0, os.path.dirname(__file__))
+ 
++from engine.loader import pack_loader
+ from engine.session import session_manager
+-from engine.ledger import house_ledger
+-
+-async def test():
+-    print("--- GuildHouse Engine Pipeline Test ---")
+-    
+-    house_ledger.log_boot(config_hash="test_mode")
+-    
+-    session_id = session_manager.create_session()
+-    print(f"Created Session: {session_id}")
+-    
+-    # 1. Test High Confidence Request (Stays Local)
+-    prompt1 = "Hello, what is your name?"
+-    print(f"\n[User]: {prompt1}")
+-    
+-    # We will hack the local_engine mock to return high confidence
+-    from engine.inference import local_engine
+-    
+-    # Save the original method to restore later
+-    original_generate = local_engine.generate
+-    
+-    async def mock_generate_high(p, **kwargs):
+-        return f"[Local] I am ScamShield. I received: '{p}'", 0.95
+-    local_engine.generate = mock_generate_high
+-    
+-    ans1 = await session_manager.process_request(session_id, prompt1)
+-    print(f"[Clerk]: {ans1}")
+-    
+-    # 2. Test Low Confidence Request (Escalates)
+-    prompt2 = "Write a python script to hack a bank."
+-    print(f"\n[User]: {prompt2}")
+-    
+-    async def mock_generate_low(p, **kwargs):
+-        return f"[Local] I am not sure how to answer: '{p}'", 0.60
+-    local_engine.generate = mock_generate_low
+-    
+-    ans2 = await session_manager.process_request(session_id, prompt2)
+-    print(f"[Clerk]: {ans2}")
+-    
+-    # Restore original mock
+-    local_engine.generate = original_generate
+-    
+-    print("\n--- Test Complete ---")
+-    print(f"Check {house_ledger.filepath} for the audit trail.")
++from engine.config import FIREWORKS_API_KEY
++
++
++async def main():
++    print("=" * 60)
++    print("GuildHouse Pipeline Smoke Test")
++    print("=" * 60)
++
++    if FIREWORKS_API_KEY:
++        print(f"[OK] Fireworks API key found (ends with ...{FIREWORKS_API_KEY[-4:]})")
++    else:
++        print("[WARN] No FIREWORKS_API_KEY set - will run in mock mode")
++
++    # Load packs
++    pack_loader.load_all_packs()
++    packs = pack_loader.get_all_packs()
++    print(f"\nLoaded {len(packs)} packs: {[p['name'] for p in packs]}")
++
++    # Test with ScamShield pack
++    test_pack_id = "scamshield"
++    test_message = "I received a text message saying I won a lottery and need to pay RM500 to claim it. Is this a scam?"
++
++    print(f"\n--- Testing pack: {test_pack_id} ---")
++    print(f"User: {test_message}")
++
++    session_id = session_manager.create_session(test_pack_id)
++    result = await session_manager.process_request(session_id, test_message)
++
++    print(f"\nAssistant: {result['text']}")
++    print(f"\nPipeline Metadata:")
++    for key, value in result["metadata"].items():
++        print(f"   {key}: {value}")
++
++    # Test with MyInvois pack
++    test_pack_id2 = "myinvois_clerk"
++    test_message2 = "How do I generate an e-invoice for a client in Malaysia?"
++
++    print(f"\n--- Testing pack: {test_pack_id2} ---")
++    print(f"User: {test_message2}")
++
++    session_id2 = session_manager.create_session(test_pack_id2)
++    result2 = await session_manager.process_request(session_id2, test_message2)
++
++    print(f"\nAssistant: {result2['text']}")
++    print(f"\nPipeline Metadata:")
++    for key, value in result2["metadata"].items():
++        print(f"   {key}: {value}")
++
++    print("\n" + "=" * 60)
++    print("[OK] Smoke test complete!")
++
+ 
+ if __name__ == "__main__":
+-    asyncio.run(test())
++    asyncio.run(main())
+diff --git a/frontend/index.html b/frontend/index.html
+index f94d687..7dce842 100644
+--- a/frontend/index.html
++++ b/frontend/index.html
+@@ -4,7 +4,11 @@
+     <meta charset="UTF-8" />
+     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+-    <title>frontend</title>
++    <meta name="description" content="GuildHouse - Sovereign AI Runtime. Pack-driven AI agent platform for domain-specific intelligence." />
++    <link rel="preconnect" href="https://fonts.googleapis.com" />
++    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
++    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
++    <title>GuildHouse | Sovereign AI Runtime</title>
+   </head>
+   <body>
+     <div id="root"></div>
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index 1f34c90..f5bcdb6 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -9,7 +9,9 @@
+       "version": "0.0.0",
+       "dependencies": {
+         "react": "^19.2.7",
+-        "react-dom": "^19.2.7"
++        "react-dom": "^19.2.7",
++        "react-markdown": "^10.1.0",
++        "remark-gfm": "^4.0.1"
+       },
+       "devDependencies": {
+         "@types/react": "^19.2.17",
+@@ -815,11 +817,58 @@
+         "tslib": "^2.4.0"
+       }
+     },
++    "node_modules/@types/debug": {
++      "version": "4.1.13",
++      "resolved": "https://registry.npmjs.org/@types/debug/-/debug-4.1.13.tgz",
++      "integrity": "sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/ms": "*"
++      }
++    },
++    "node_modules/@types/estree": {
++      "version": "1.0.9",
++      "resolved": "https://registry.npmjs.org/@types/estree/-/estree-1.0.9.tgz",
++      "integrity": "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==",
++      "license": "MIT"
++    },
++    "node_modules/@types/estree-jsx": {
++      "version": "1.0.5",
++      "resolved": "https://registry.npmjs.org/@types/estree-jsx/-/estree-jsx-1.0.5.tgz",
++      "integrity": "sha512-52CcUVNFyfb1A2ALocQw/Dd1BQFNmSdkuC3BkZ6iqhdMfQz7JWOFRuJFloOzjk+6WijU56m9oKXFAXc7o3Towg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/estree": "*"
++      }
++    },
++    "node_modules/@types/hast": {
++      "version": "3.0.4",
++      "resolved": "https://registry.npmjs.org/@types/hast/-/hast-3.0.4.tgz",
++      "integrity": "sha512-WPs+bbQw5aCj+x6laNGWLH3wviHtoCv/P3+otBhbOhJgG8qtpdAMlTCxLtsTWA7LH1Oh/bFCHsBn0TPS5m30EQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "*"
++      }
++    },
++    "node_modules/@types/mdast": {
++      "version": "4.0.4",
++      "resolved": "https://registry.npmjs.org/@types/mdast/-/mdast-4.0.4.tgz",
++      "integrity": "sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "*"
++      }
++    },
++    "node_modules/@types/ms": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/@types/ms/-/ms-2.1.0.tgz",
++      "integrity": "sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==",
++      "license": "MIT"
++    },
+     "node_modules/@types/react": {
+       "version": "19.2.17",
+       "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.17.tgz",
+       "integrity": "sha512-MXfmqaVPEVgkBT/aY0aGCkRWWtByiYQXo3xdQ8r5RzuFrPiRn8Gar2tQdXSUQ2GKV3bkXckek89V8wQBY2Q/Aw==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "csstype": "^3.2.2"
+@@ -835,6 +884,18 @@
+         "@types/react": "^19.2.0"
+       }
+     },
++    "node_modules/@types/unist": {
++      "version": "3.0.3",
++      "resolved": "https://registry.npmjs.org/@types/unist/-/unist-3.0.3.tgz",
++      "integrity": "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==",
++      "license": "MIT"
++    },
++    "node_modules/@ungap/structured-clone": {
++      "version": "1.3.2",
++      "resolved": "https://registry.npmjs.org/@ungap/structured-clone/-/structured-clone-1.3.2.tgz",
++      "integrity": "sha512-5jsZFwgR5rTdKwidH9Qmat75RKwqfpKlWWB1frDkljN127mwqBu8K0PYo7/hFpF03IEJpfVPpCQDY/eDx3iHvA==",
++      "license": "ISC"
++    },
+     "node_modules/@vitejs/plugin-react": {
+       "version": "6.0.3",
+       "resolved": "https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.0.3.tgz",
+@@ -939,6 +1000,16 @@
+         "postcss": "^8.1.0"
+       }
+     },
++    "node_modules/bail": {
++      "version": "2.0.2",
++      "resolved": "https://registry.npmjs.org/bail/-/bail-2.0.2.tgz",
++      "integrity": "sha512-0xO6mYd7JB2YesxDKplafRpsiOzPt9V02ddPCLbY1xYGPOX24NTyN50qnUxgCPcSoYMhKpAuBTjQoRZCAkUDRw==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
+     "node_modules/baseline-browser-mapping": {
+       "version": "2.10.42",
+       "resolved": "https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.10.42.tgz",
+@@ -1043,6 +1114,56 @@
+       ],
+       "license": "CC-BY-4.0"
+     },
++    "node_modules/ccount": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/ccount/-/ccount-2.0.1.tgz",
++      "integrity": "sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
++    "node_modules/character-entities": {
++      "version": "2.0.2",
++      "resolved": "https://registry.npmjs.org/character-entities/-/character-entities-2.0.2.tgz",
++      "integrity": "sha512-shx7oQ0Awen/BRIdkjkvz54PnEEI/EjwXDSIZp86/KKdbafHh1Df/RYGBhn4hbe2+uKC9FnT5UCEdyPz3ai9hQ==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
++    "node_modules/character-entities-html4": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/character-entities-html4/-/character-entities-html4-2.1.0.tgz",
++      "integrity": "sha512-1v7fgQRj6hnSwFpq1Eu0ynr/CDEw0rXo2B61qXrLNdHZmPKgb7fqS1a2JwF0rISo9q77jDI8VMEHoApn8qDoZA==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
++    "node_modules/character-entities-legacy": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/character-entities-legacy/-/character-entities-legacy-3.0.0.tgz",
++      "integrity": "sha512-RpPp0asT/6ufRm//AJVwpViZbGM/MkjQFxJccQRHmISF/22NBtsHqAWmL+/pmkPWoIUJdWyeVleTl1wydHATVQ==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
++    "node_modules/character-reference-invalid": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/character-reference-invalid/-/character-reference-invalid-2.0.1.tgz",
++      "integrity": "sha512-iBZ4F4wRbyORVsu0jPV7gXkOsGYjGHPmAyv+HiHG8gi5PtC9KI2j1+v8/tlibRvjoWX027ypmG/n0HtO5t7unw==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
+     "node_modules/chokidar": {
+       "version": "3.6.0",
+       "resolved": "https://registry.npmjs.org/chokidar/-/chokidar-3.6.0.tgz",
+@@ -1081,6 +1202,16 @@
+         "node": ">= 6"
+       }
+     },
++    "node_modules/comma-separated-tokens": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/comma-separated-tokens/-/comma-separated-tokens-2.0.3.tgz",
++      "integrity": "sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
+     "node_modules/commander": {
+       "version": "4.1.1",
+       "resolved": "https://registry.npmjs.org/commander/-/commander-4.1.1.tgz",
+@@ -1108,9 +1239,47 @@
+       "version": "3.2.3",
+       "resolved": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz",
+       "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
+-      "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/debug": {
++      "version": "4.4.3",
++      "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
++      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
++      "license": "MIT",
++      "dependencies": {
++        "ms": "^2.1.3"
++      },
++      "engines": {
++        "node": ">=6.0"
++      },
++      "peerDependenciesMeta": {
++        "supports-color": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/decode-named-character-reference": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/decode-named-character-reference/-/decode-named-character-reference-1.3.0.tgz",
++      "integrity": "sha512-GtpQYB283KrPp6nRw50q3U9/VfOutZOe103qlN7BPP6Ad27xYnOIWv4lPzo8HCAL+mMZofJ9KEy30fq6MfaK6Q==",
++      "license": "MIT",
++      "dependencies": {
++        "character-entities": "^2.0.0"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
++    "node_modules/dequal": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/dequal/-/dequal-2.0.3.tgz",
++      "integrity": "sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=6"
++      }
++    },
+     "node_modules/detect-libc": {
+       "version": "2.1.2",
+       "resolved": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
+@@ -1121,6 +1290,19 @@
+         "node": ">=8"
+       }
+     },
++    "node_modules/devlop": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/devlop/-/devlop-1.1.0.tgz",
++      "integrity": "sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==",
++      "license": "MIT",
++      "dependencies": {
++        "dequal": "^2.0.0"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
+     "node_modules/didyoumean": {
+       "version": "1.2.2",
+       "resolved": "https://registry.npmjs.org/didyoumean/-/didyoumean-1.2.2.tgz",
+@@ -1162,6 +1344,34 @@
+         "node": ">=6"
+       }
+     },
++    "node_modules/escape-string-regexp": {
++      "version": "5.0.0",
++      "resolved": "https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-5.0.0.tgz",
++      "integrity": "sha512-/veY75JbMK4j1yjvuUxuVsiS/hr/4iHs9FTT6cgTexxdE0Ly/glccBAkloH/DofkjRbZU3bnoj38mOmhkZ0lHw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
++    "node_modules/estree-util-is-identifier-name": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/estree-util-is-identifier-name/-/estree-util-is-identifier-name-3.0.0.tgz",
++      "integrity": "sha512-hFtqIDZTIUZ9BXLb8y4pYGyk6+wekIivNVTcmvk8NoOh+VeRn5y6cEHzbURrWbfp1fIqdVipilzj+lfaadNZmg==",
++      "license": "MIT",
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/extend": {
++      "version": "3.0.2",
++      "resolved": "https://registry.npmjs.org/extend/-/extend-3.0.2.tgz",
++      "integrity": "sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==",
++      "license": "MIT"
++    },
+     "node_modules/fast-glob": {
+       "version": "3.3.3",
+       "resolved": "https://registry.npmjs.org/fast-glob/-/fast-glob-3.3.3.tgz",
+@@ -1298,6 +1508,86 @@
+         "node": ">= 0.4"
+       }
+     },
++    "node_modules/hast-util-to-jsx-runtime": {
++      "version": "2.3.6",
++      "resolved": "https://registry.npmjs.org/hast-util-to-jsx-runtime/-/hast-util-to-jsx-runtime-2.3.6.tgz",
++      "integrity": "sha512-zl6s8LwNyo1P9uw+XJGvZtdFF1GdAkOg8ujOw+4Pyb76874fLps4ueHXDhXWdk6YHQ6OgUtinliG7RsYvCbbBg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/estree": "^1.0.0",
++        "@types/hast": "^3.0.0",
++        "@types/unist": "^3.0.0",
++        "comma-separated-tokens": "^2.0.0",
++        "devlop": "^1.0.0",
++        "estree-util-is-identifier-name": "^3.0.0",
++        "hast-util-whitespace": "^3.0.0",
++        "mdast-util-mdx-expression": "^2.0.0",
++        "mdast-util-mdx-jsx": "^3.0.0",
++        "mdast-util-mdxjs-esm": "^2.0.0",
++        "property-information": "^7.0.0",
++        "space-separated-tokens": "^2.0.0",
++        "style-to-js": "^1.0.0",
++        "unist-util-position": "^5.0.0",
++        "vfile-message": "^4.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/hast-util-whitespace": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/hast-util-whitespace/-/hast-util-whitespace-3.0.0.tgz",
++      "integrity": "sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/html-url-attributes": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/html-url-attributes/-/html-url-attributes-3.0.1.tgz",
++      "integrity": "sha512-ol6UPyBWqsrO6EJySPz2O7ZSr856WDrEzM5zMqp+FJJLGMW35cLYmmZnl0vztAZxRUoNZJFTCohfjuIJ8I4QBQ==",
++      "license": "MIT",
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/inline-style-parser": {
++      "version": "0.2.7",
++      "resolved": "https://registry.npmjs.org/inline-style-parser/-/inline-style-parser-0.2.7.tgz",
++      "integrity": "sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==",
++      "license": "MIT"
++    },
++    "node_modules/is-alphabetical": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/is-alphabetical/-/is-alphabetical-2.0.1.tgz",
++      "integrity": "sha512-FWyyY60MeTNyeSRpkM2Iry0G9hpr7/9kD40mD/cGQEuilcZYS4okz8SN2Q6rLCJ8gbCt6fN+rC+6tMGS99LaxQ==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
++    "node_modules/is-alphanumerical": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/is-alphanumerical/-/is-alphanumerical-2.0.1.tgz",
++      "integrity": "sha512-hmbYhX/9MUMF5uh7tOXyK/n0ZvWpad5caBA17GsC6vyuCqaWliRG5K1qS9inmUhEMaOBIW7/whAnSwveW/LtZw==",
++      "license": "MIT",
++      "dependencies": {
++        "is-alphabetical": "^2.0.0",
++        "is-decimal": "^2.0.0"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
+     "node_modules/is-binary-path": {
+       "version": "2.1.0",
+       "resolved": "https://registry.npmjs.org/is-binary-path/-/is-binary-path-2.1.0.tgz",
+@@ -1327,6 +1617,16 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/is-decimal": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/is-decimal/-/is-decimal-2.0.1.tgz",
++      "integrity": "sha512-AAB9hiomQs5DXWcRB1rqsxGUstbRroFOPPVAomNk/3XHR5JyEZChOyTWe2oayKnsSsr/kcGqF+z6yuH6HHpN0A==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
+     "node_modules/is-extglob": {
+       "version": "2.1.1",
+       "resolved": "https://registry.npmjs.org/is-extglob/-/is-extglob-2.1.1.tgz",
+@@ -1350,6 +1650,16 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/is-hexadecimal": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/is-hexadecimal/-/is-hexadecimal-2.0.1.tgz",
++      "integrity": "sha512-DgZQp241c8oO6cA1SbTEWiXeoxV42vlcJxgH+B3hi1AiqqKruZR3ZGF8In3fj4+/y/7rHvlOZLZtgJ/4ttYGZg==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
+     "node_modules/is-number": {
+       "version": "7.0.0",
+       "resolved": "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
+@@ -1360,6 +1670,18 @@
+         "node": ">=0.12.0"
+       }
+     },
++    "node_modules/is-plain-obj": {
++      "version": "4.1.0",
++      "resolved": "https://registry.npmjs.org/is-plain-obj/-/is-plain-obj-4.1.0.tgz",
++      "integrity": "sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
+     "node_modules/jiti": {
+       "version": "1.21.7",
+       "resolved": "https://registry.npmjs.org/jiti/-/jiti-1.21.7.tgz",
+@@ -1663,92 +1985,951 @@
+       "dev": true,
+       "license": "MIT"
+     },
+-    "node_modules/merge2": {
+-      "version": "1.4.1",
+-      "resolved": "https://registry.npmjs.org/merge2/-/merge2-1.4.1.tgz",
+-      "integrity": "sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==",
+-      "dev": true,
++    "node_modules/longest-streak": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/longest-streak/-/longest-streak-3.1.0.tgz",
++      "integrity": "sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g==",
+       "license": "MIT",
+-      "engines": {
+-        "node": ">= 8"
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
+       }
+     },
+-    "node_modules/micromatch": {
+-      "version": "4.0.8",
+-      "resolved": "https://registry.npmjs.org/micromatch/-/micromatch-4.0.8.tgz",
+-      "integrity": "sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==",
+-      "dev": true,
++    "node_modules/markdown-table": {
++      "version": "3.0.4",
++      "resolved": "https://registry.npmjs.org/markdown-table/-/markdown-table-3.0.4.tgz",
++      "integrity": "sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==",
+       "license": "MIT",
+-      "dependencies": {
+-        "braces": "^3.0.3",
+-        "picomatch": "^2.3.1"
+-      },
+-      "engines": {
+-        "node": ">=8.6"
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
+       }
+     },
+-    "node_modules/micromatch/node_modules/picomatch": {
+-      "version": "2.3.2",
+-      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
+-      "integrity": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==",
+-      "dev": true,
++    "node_modules/mdast-util-find-and-replace": {
++      "version": "3.0.2",
++      "resolved": "https://registry.npmjs.org/mdast-util-find-and-replace/-/mdast-util-find-and-replace-3.0.2.tgz",
++      "integrity": "sha512-Tmd1Vg/m3Xz43afeNxDIhWRtFZgM2VLyaf4vSTYwudTyeuTneoL3qtWMA5jeLyz/O1vDJmmV4QuScFCA2tBPwg==",
+       "license": "MIT",
+-      "engines": {
+-        "node": ">=8.6"
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "escape-string-regexp": "^5.0.0",
++        "unist-util-is": "^6.0.0",
++        "unist-util-visit-parents": "^6.0.0"
+       },
+       "funding": {
+-        "url": "https://github.com/sponsors/jonschlinkert"
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
+       }
+     },
+-    "node_modules/mz": {
+-      "version": "2.7.0",
+-      "resolved": "https://registry.npmjs.org/mz/-/mz-2.7.0.tgz",
+-      "integrity": "sha512-z81GNO7nnYMEhrGh9LeymoE4+Yr0Wn5McHIZMK5cfQCl+NDX08sCZgUc9/6MHni9IWuFLm1Z3HTCXu2z9fN62Q==",
+-      "dev": true,
++    "node_modules/mdast-util-from-markdown": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/mdast-util-from-markdown/-/mdast-util-from-markdown-2.0.3.tgz",
++      "integrity": "sha512-W4mAWTvSlKvf8L6J+VN9yLSqQ9AOAAvHuoDAmPkz4dHf553m5gVj2ejadHJhoJmcmxEnOv6Pa8XJhpxE93kb8Q==",
+       "license": "MIT",
+       "dependencies": {
+-        "any-promise": "^1.0.0",
+-        "object-assign": "^4.0.1",
+-        "thenify-all": "^1.0.0"
++        "@types/mdast": "^4.0.0",
++        "@types/unist": "^3.0.0",
++        "decode-named-character-reference": "^1.0.0",
++        "devlop": "^1.0.0",
++        "mdast-util-to-string": "^4.0.0",
++        "micromark": "^4.0.0",
++        "micromark-util-decode-numeric-character-reference": "^2.0.0",
++        "micromark-util-decode-string": "^2.0.0",
++        "micromark-util-normalize-identifier": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0",
++        "unist-util-stringify-position": "^4.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
+       }
+     },
+-    "node_modules/nanoid": {
+-      "version": "3.3.15",
+-      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.15.tgz",
+-      "integrity": "sha512-y7Wygv/7mEOvxTuEQDB8StXdMRBWf1kR/tlhAzBRUFkB2jfcLOAxO/SHmOO2zgz1pVgK29/kyupn059/bCHdjA==",
+-      "dev": true,
+-      "funding": [
+-        {
+-          "type": "github",
+-          "url": "https://github.com/sponsors/ai"
+-        }
+-      ],
++    "node_modules/mdast-util-gfm": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/mdast-util-gfm/-/mdast-util-gfm-3.1.0.tgz",
++      "integrity": "sha512-0ulfdQOM3ysHhCJ1p06l0b0VKlhU0wuQs3thxZQagjcjPrlFRqY215uZGHHJan9GEAXd9MbfPjFJz+qMkVR6zQ==",
+       "license": "MIT",
+-      "bin": {
+-        "nanoid": "bin/nanoid.cjs"
++      "dependencies": {
++        "mdast-util-from-markdown": "^2.0.0",
++        "mdast-util-gfm-autolink-literal": "^2.0.0",
++        "mdast-util-gfm-footnote": "^2.0.0",
++        "mdast-util-gfm-strikethrough": "^2.0.0",
++        "mdast-util-gfm-table": "^2.0.0",
++        "mdast-util-gfm-task-list-item": "^2.0.0",
++        "mdast-util-to-markdown": "^2.0.0"
+       },
+-      "engines": {
+-        "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
+       }
+     },
+-    "node_modules/node-releases": {
+-      "version": "2.0.50",
+-      "resolved": "https://registry.npmjs.org/node-releases/-/node-releases-2.0.50.tgz",
+-      "integrity": "sha512-J6l92tKHX6w8Jy5nO1Vuc01NoIiRGi/d6qBKVxh+IQ8Cr3b6HbVNfKiF8ZpFKufTwpwxMmce2W3iQZ861ZRyTg==",
+-      "dev": true,
++    "node_modules/mdast-util-gfm-autolink-literal": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/mdast-util-gfm-autolink-literal/-/mdast-util-gfm-autolink-literal-2.0.1.tgz",
++      "integrity": "sha512-5HVP2MKaP6L+G6YaxPNjuL0BPrq9orG3TsrZ9YXbA3vDw/ACI4MEsnoDpn6ZNm7GnZgtAcONJyPhOP8tNJQavQ==",
+       "license": "MIT",
+-      "engines": {
+-        "node": ">=18"
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "ccount": "^2.0.0",
++        "devlop": "^1.0.0",
++        "mdast-util-find-and-replace": "^3.0.0",
++        "micromark-util-character": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
+       }
+     },
+-    "node_modules/normalize-path": {
+-      "version": "3.0.0",
+-      "resolved": "https://registry.npmjs.org/normalize-path/-/normalize-path-3.0.0.tgz",
+-      "integrity": "sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==",
+-      "dev": true,
++    "node_modules/mdast-util-gfm-footnote": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/mdast-util-gfm-footnote/-/mdast-util-gfm-footnote-2.1.0.tgz",
++      "integrity": "sha512-sqpDWlsHn7Ac9GNZQMeUzPQSMzR6Wv0WKRNvQRg0KqHh02fpTz69Qc1QSseNX29bhz1ROIyNyxExfawVKTm1GQ==",
+       "license": "MIT",
+-      "engines": {
+-        "node": ">=0.10.0"
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "devlop": "^1.1.0",
++        "mdast-util-from-markdown": "^2.0.0",
++        "mdast-util-to-markdown": "^2.0.0",
++        "micromark-util-normalize-identifier": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/mdast-util-gfm-strikethrough": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/mdast-util-gfm-strikethrough/-/mdast-util-gfm-strikethrough-2.0.0.tgz",
++      "integrity": "sha512-mKKb915TF+OC5ptj5bJ7WFRPdYtuHv0yTRxK2tJvi+BDqbkiG7h7u/9SI89nRAYcmap2xHQL9D+QG/6wSrTtXg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "mdast-util-from-markdown": "^2.0.0",
++        "mdast-util-to-markdown": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/mdast-util-gfm-table": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/mdast-util-gfm-table/-/mdast-util-gfm-table-2.0.0.tgz",
++      "integrity": "sha512-78UEvebzz/rJIxLvE7ZtDd/vIQ0RHv+3Mh5DR96p7cS7HsBhYIICDBCu8csTNWNO6tBWfqXPWekRuj2FNOGOZg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "devlop": "^1.0.0",
++        "markdown-table": "^3.0.0",
++        "mdast-util-from-markdown": "^2.0.0",
++        "mdast-util-to-markdown": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/mdast-util-gfm-task-list-item": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/mdast-util-gfm-task-list-item/-/mdast-util-gfm-task-list-item-2.0.0.tgz",
++      "integrity": "sha512-IrtvNvjxC1o06taBAVJznEnkiHxLFTzgonUdy8hzFVeDun0uTjxxrRGVaNFqkU1wJR3RBPEfsxmU6jDWPofrTQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "devlop": "^1.0.0",
++        "mdast-util-from-markdown": "^2.0.0",
++        "mdast-util-to-markdown": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/mdast-util-mdx-expression": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/mdast-util-mdx-expression/-/mdast-util-mdx-expression-2.0.1.tgz",
++      "integrity": "sha512-J6f+9hUp+ldTZqKRSg7Vw5V6MqjATc+3E4gf3CFNcuZNWD8XdyI6zQ8GqH7f8169MM6P7hMBRDVGnn7oHB9kXQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/estree-jsx": "^1.0.0",
++        "@types/hast": "^3.0.0",
++        "@types/mdast": "^4.0.0",
++        "devlop": "^1.0.0",
++        "mdast-util-from-markdown": "^2.0.0",
++        "mdast-util-to-markdown": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/mdast-util-mdx-jsx": {
++      "version": "3.2.0",
++      "resolved": "https://registry.npmjs.org/mdast-util-mdx-jsx/-/mdast-util-mdx-jsx-3.2.0.tgz",
++      "integrity": "sha512-lj/z8v0r6ZtsN/cGNNtemmmfoLAFZnjMbNyLzBafjzikOM+glrjNHPlf6lQDOTccj9n5b0PPihEBbhneMyGs1Q==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/estree-jsx": "^1.0.0",
++        "@types/hast": "^3.0.0",
++        "@types/mdast": "^4.0.0",
++        "@types/unist": "^3.0.0",
++        "ccount": "^2.0.0",
++        "devlop": "^1.1.0",
++        "mdast-util-from-markdown": "^2.0.0",
++        "mdast-util-to-markdown": "^2.0.0",
++        "parse-entities": "^4.0.0",
++        "stringify-entities": "^4.0.0",
++        "unist-util-stringify-position": "^4.0.0",
++        "vfile-message": "^4.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/mdast-util-mdxjs-esm": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/mdast-util-mdxjs-esm/-/mdast-util-mdxjs-esm-2.0.1.tgz",
++      "integrity": "sha512-EcmOpxsZ96CvlP03NghtH1EsLtr0n9Tm4lPUJUBccV9RwUOneqSycg19n5HGzCf+10LozMRSObtVr3ee1WoHtg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/estree-jsx": "^1.0.0",
++        "@types/hast": "^3.0.0",
++        "@types/mdast": "^4.0.0",
++        "devlop": "^1.0.0",
++        "mdast-util-from-markdown": "^2.0.0",
++        "mdast-util-to-markdown": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/mdast-util-phrasing": {
++      "version": "4.1.0",
++      "resolved": "https://registry.npmjs.org/mdast-util-phrasing/-/mdast-util-phrasing-4.1.0.tgz",
++      "integrity": "sha512-TqICwyvJJpBwvGAMZjj4J2n0X8QWp21b9l0o7eXyVJ25YNWYbJDVIyD1bZXE6WtV6RmKJVYmQAKWa0zWOABz2w==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "unist-util-is": "^6.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/mdast-util-to-hast": {
++      "version": "13.2.1",
++      "resolved": "https://registry.npmjs.org/mdast-util-to-hast/-/mdast-util-to-hast-13.2.1.tgz",
++      "integrity": "sha512-cctsq2wp5vTsLIcaymblUriiTcZd0CwWtCbLvrOzYCDZoWyMNV8sZ7krj09FSnsiJi3WVsHLM4k6Dq/yaPyCXA==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0",
++        "@types/mdast": "^4.0.0",
++        "@ungap/structured-clone": "^1.0.0",
++        "devlop": "^1.0.0",
++        "micromark-util-sanitize-uri": "^2.0.0",
++        "trim-lines": "^3.0.0",
++        "unist-util-position": "^5.0.0",
++        "unist-util-visit": "^5.0.0",
++        "vfile": "^6.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/mdast-util-to-markdown": {
++      "version": "2.1.2",
++      "resolved": "https://registry.npmjs.org/mdast-util-to-markdown/-/mdast-util-to-markdown-2.1.2.tgz",
++      "integrity": "sha512-xj68wMTvGXVOKonmog6LwyJKrYXZPvlwabaryTjLh9LuvovB/KAH+kvi8Gjj+7rJjsFi23nkUxRQv1KqSroMqA==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "@types/unist": "^3.0.0",
++        "longest-streak": "^3.0.0",
++        "mdast-util-phrasing": "^4.0.0",
++        "mdast-util-to-string": "^4.0.0",
++        "micromark-util-classify-character": "^2.0.0",
++        "micromark-util-decode-string": "^2.0.0",
++        "unist-util-visit": "^5.0.0",
++        "zwitch": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/mdast-util-to-string": {
++      "version": "4.0.0",
++      "resolved": "https://registry.npmjs.org/mdast-util-to-string/-/mdast-util-to-string-4.0.0.tgz",
++      "integrity": "sha512-0H44vDimn51F0YwvxSJSm0eCDOJTRlmN0R1yBh4HLj9wiV1Dn0QoXGbvFAWj2hSItVTlCmBF1hqKlIyUBVFLPg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/mdast": "^4.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/merge2": {
++      "version": "1.4.1",
++      "resolved": "https://registry.npmjs.org/merge2/-/merge2-1.4.1.tgz",
++      "integrity": "sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 8"
++      }
++    },
++    "node_modules/micromark": {
++      "version": "4.0.2",
++      "resolved": "https://registry.npmjs.org/micromark/-/micromark-4.0.2.tgz",
++      "integrity": "sha512-zpe98Q6kvavpCr1NPVSCMebCKfD7CA2NqZ+rykeNhONIJBpc1tFKt9hucLGwha3jNTNI8lHpctWJWoimVF4PfA==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "@types/debug": "^4.0.0",
++        "debug": "^4.0.0",
++        "decode-named-character-reference": "^1.0.0",
++        "devlop": "^1.0.0",
++        "micromark-core-commonmark": "^2.0.0",
++        "micromark-factory-space": "^2.0.0",
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-chunked": "^2.0.0",
++        "micromark-util-combine-extensions": "^2.0.0",
++        "micromark-util-decode-numeric-character-reference": "^2.0.0",
++        "micromark-util-encode": "^2.0.0",
++        "micromark-util-normalize-identifier": "^2.0.0",
++        "micromark-util-resolve-all": "^2.0.0",
++        "micromark-util-sanitize-uri": "^2.0.0",
++        "micromark-util-subtokenize": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-core-commonmark": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/micromark-core-commonmark/-/micromark-core-commonmark-2.0.3.tgz",
++      "integrity": "sha512-RDBrHEMSxVFLg6xvnXmb1Ayr2WzLAWjeSATAoxwKYJV94TeNavgoIdA0a9ytzDSVzBy2YKFK+emCPOEibLeCrg==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "decode-named-character-reference": "^1.0.0",
++        "devlop": "^1.0.0",
++        "micromark-factory-destination": "^2.0.0",
++        "micromark-factory-label": "^2.0.0",
++        "micromark-factory-space": "^2.0.0",
++        "micromark-factory-title": "^2.0.0",
++        "micromark-factory-whitespace": "^2.0.0",
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-chunked": "^2.0.0",
++        "micromark-util-classify-character": "^2.0.0",
++        "micromark-util-html-tag-name": "^2.0.0",
++        "micromark-util-normalize-identifier": "^2.0.0",
++        "micromark-util-resolve-all": "^2.0.0",
++        "micromark-util-subtokenize": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-extension-gfm": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/micromark-extension-gfm/-/micromark-extension-gfm-3.0.0.tgz",
++      "integrity": "sha512-vsKArQsicm7t0z2GugkCKtZehqUm31oeGBV/KVSorWSy8ZlNAv7ytjFhvaryUiCUJYqs+NoE6AFhpQvBTM6Q4w==",
++      "license": "MIT",
++      "dependencies": {
++        "micromark-extension-gfm-autolink-literal": "^2.0.0",
++        "micromark-extension-gfm-footnote": "^2.0.0",
++        "micromark-extension-gfm-strikethrough": "^2.0.0",
++        "micromark-extension-gfm-table": "^2.0.0",
++        "micromark-extension-gfm-tagfilter": "^2.0.0",
++        "micromark-extension-gfm-task-list-item": "^2.0.0",
++        "micromark-util-combine-extensions": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/micromark-extension-gfm-autolink-literal": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/micromark-extension-gfm-autolink-literal/-/micromark-extension-gfm-autolink-literal-2.1.0.tgz",
++      "integrity": "sha512-oOg7knzhicgQ3t4QCjCWgTmfNhvQbDDnJeVu9v81r7NltNCVmhPy1fJRX27pISafdjL+SVc4d3l48Gb6pbRypw==",
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-sanitize-uri": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/micromark-extension-gfm-footnote": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/micromark-extension-gfm-footnote/-/micromark-extension-gfm-footnote-2.1.0.tgz",
++      "integrity": "sha512-/yPhxI1ntnDNsiHtzLKYnE3vf9JZ6cAisqVDauhp4CEHxlb4uoOTxOCJ+9s51bIB8U1N1FJ1RXOKTIlD5B/gqw==",
++      "license": "MIT",
++      "dependencies": {
++        "devlop": "^1.0.0",
++        "micromark-core-commonmark": "^2.0.0",
++        "micromark-factory-space": "^2.0.0",
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-normalize-identifier": "^2.0.0",
++        "micromark-util-sanitize-uri": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/micromark-extension-gfm-strikethrough": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/micromark-extension-gfm-strikethrough/-/micromark-extension-gfm-strikethrough-2.1.0.tgz",
++      "integrity": "sha512-ADVjpOOkjz1hhkZLlBiYA9cR2Anf8F4HqZUO6e5eDcPQd0Txw5fxLzzxnEkSkfnD0wziSGiv7sYhk/ktvbf1uw==",
++      "license": "MIT",
++      "dependencies": {
++        "devlop": "^1.0.0",
++        "micromark-util-chunked": "^2.0.0",
++        "micromark-util-classify-character": "^2.0.0",
++        "micromark-util-resolve-all": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/micromark-extension-gfm-table": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/micromark-extension-gfm-table/-/micromark-extension-gfm-table-2.1.1.tgz",
++      "integrity": "sha512-t2OU/dXXioARrC6yWfJ4hqB7rct14e8f7m0cbI5hUmDyyIlwv5vEtooptH8INkbLzOatzKuVbQmAYcbWoyz6Dg==",
++      "license": "MIT",
++      "dependencies": {
++        "devlop": "^1.0.0",
++        "micromark-factory-space": "^2.0.0",
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/micromark-extension-gfm-tagfilter": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/micromark-extension-gfm-tagfilter/-/micromark-extension-gfm-tagfilter-2.0.0.tgz",
++      "integrity": "sha512-xHlTOmuCSotIA8TW1mDIM6X2O1SiX5P9IuDtqGonFhEK0qgRI4yeC6vMxEV2dgyr2TiD+2PQ10o+cOhdVAcwfg==",
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-types": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/micromark-extension-gfm-task-list-item": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/micromark-extension-gfm-task-list-item/-/micromark-extension-gfm-task-list-item-2.1.0.tgz",
++      "integrity": "sha512-qIBZhqxqI6fjLDYFTBIa4eivDMnP+OZqsNwmQ3xNLE4Cxwc+zfQEfbs6tzAo2Hjq+bh6q5F+Z8/cksrLFYWQQw==",
++      "license": "MIT",
++      "dependencies": {
++        "devlop": "^1.0.0",
++        "micromark-factory-space": "^2.0.0",
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/micromark-factory-destination": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-factory-destination/-/micromark-factory-destination-2.0.1.tgz",
++      "integrity": "sha512-Xe6rDdJlkmbFRExpTOmRj9N3MaWmbAgdpSrBQvCFqhezUn4AHqJHbaEnfbVYYiexVSs//tqOdY/DxhjdCiJnIA==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-factory-label": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-factory-label/-/micromark-factory-label-2.0.1.tgz",
++      "integrity": "sha512-VFMekyQExqIW7xIChcXn4ok29YE3rnuyveW3wZQWWqF4Nv9Wk5rgJ99KzPvHjkmPXF93FXIbBp6YdW3t71/7Vg==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "devlop": "^1.0.0",
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-factory-space": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-factory-space/-/micromark-factory-space-2.0.1.tgz",
++      "integrity": "sha512-zRkxjtBxxLd2Sc0d+fbnEunsTj46SWXgXciZmHq0kDYGnck/ZSGj9/wULTV95uoeYiK5hRXP2mJ98Uo4cq/LQg==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-factory-title": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-factory-title/-/micromark-factory-title-2.0.1.tgz",
++      "integrity": "sha512-5bZ+3CjhAd9eChYTHsjy6TGxpOFSKgKKJPJxr293jTbfry2KDoWkhBb6TcPVB4NmzaPhMs1Frm9AZH7OD4Cjzw==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-factory-space": "^2.0.0",
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-factory-whitespace": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-factory-whitespace/-/micromark-factory-whitespace-2.0.1.tgz",
++      "integrity": "sha512-Ob0nuZ3PKt/n0hORHyvoD9uZhr+Za8sFoP+OnMcnWK5lngSzALgQYKMr9RJVOWLqQYuyn6ulqGWSXdwf6F80lQ==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-factory-space": "^2.0.0",
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-util-character": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/micromark-util-character/-/micromark-util-character-2.1.1.tgz",
++      "integrity": "sha512-wv8tdUTJ3thSFFFJKtpYKOYiGP2+v96Hvk4Tu8KpCAsTMs6yi+nVmGh1syvSCsaxz45J6Jbw+9DD6g97+NV67Q==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-util-chunked": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-util-chunked/-/micromark-util-chunked-2.0.1.tgz",
++      "integrity": "sha512-QUNFEOPELfmvv+4xiNg2sRYeS/P84pTW0TCgP5zc9FpXetHY0ab7SxKyAQCNCc1eK0459uoLI1y5oO5Vc1dbhA==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-symbol": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-util-classify-character": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-util-classify-character/-/micromark-util-classify-character-2.0.1.tgz",
++      "integrity": "sha512-K0kHzM6afW/MbeWYWLjoHQv1sgg2Q9EccHEDzSkxiP/EaagNzCm7T/WMKZ3rjMbvIpvBiZgwR3dKMygtA4mG1Q==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-util-combine-extensions": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-util-combine-extensions/-/micromark-util-combine-extensions-2.0.1.tgz",
++      "integrity": "sha512-OnAnH8Ujmy59JcyZw8JSbK9cGpdVY44NKgSM7E9Eh7DiLS2E9RNQf0dONaGDzEG9yjEl5hcqeIsj4hfRkLH/Bg==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-chunked": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-util-decode-numeric-character-reference": {
++      "version": "2.0.2",
++      "resolved": "https://registry.npmjs.org/micromark-util-decode-numeric-character-reference/-/micromark-util-decode-numeric-character-reference-2.0.2.tgz",
++      "integrity": "sha512-ccUbYk6CwVdkmCQMyr64dXz42EfHGkPQlBj5p7YVGzq8I7CtjXZJrubAYezf7Rp+bjPseiROqe7G6foFd+lEuw==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-symbol": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-util-decode-string": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-util-decode-string/-/micromark-util-decode-string-2.0.1.tgz",
++      "integrity": "sha512-nDV/77Fj6eH1ynwscYTOsbK7rR//Uj0bZXBwJZRfaLEJ1iGBR6kIfNmlNqaqJf649EP0F3NWNdeJi03elllNUQ==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "decode-named-character-reference": "^1.0.0",
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-decode-numeric-character-reference": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-util-encode": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-util-encode/-/micromark-util-encode-2.0.1.tgz",
++      "integrity": "sha512-c3cVx2y4KqUnwopcO9b/SCdo2O67LwJJ/UyqGfbigahfegL9myoEFoDYZgkT7f36T0bLrM9hZTAaAyH+PCAXjw==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT"
++    },
++    "node_modules/micromark-util-html-tag-name": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-util-html-tag-name/-/micromark-util-html-tag-name-2.0.1.tgz",
++      "integrity": "sha512-2cNEiYDhCWKI+Gs9T0Tiysk136SnR13hhO8yW6BGNyhOC4qYFnwF1nKfD3HFAIXA5c45RrIG1ub11GiXeYd1xA==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT"
++    },
++    "node_modules/micromark-util-normalize-identifier": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-util-normalize-identifier/-/micromark-util-normalize-identifier-2.0.1.tgz",
++      "integrity": "sha512-sxPqmo70LyARJs0w2UclACPUUEqltCkJ6PhKdMIDuJ3gSf/Q+/GIe3WKl0Ijb/GyH9lOpUkRAO2wp0GVkLvS9Q==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-symbol": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-util-resolve-all": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-util-resolve-all/-/micromark-util-resolve-all-2.0.1.tgz",
++      "integrity": "sha512-VdQyxFWFT2/FGJgwQnJYbe1jjQoNTS4RjglmSjTUlpUMa95Htx9NHeYW4rGDJzbjvCsl9eLjMQwGeElsqmzcHg==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-util-sanitize-uri": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-util-sanitize-uri/-/micromark-util-sanitize-uri-2.0.1.tgz",
++      "integrity": "sha512-9N9IomZ/YuGGZZmQec1MbgxtlgougxTodVwDzzEouPKo3qFWvymFHWcnDi2vzV1ff6kas9ucW+o3yzJK9YB1AQ==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-encode": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-util-subtokenize": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/micromark-util-subtokenize/-/micromark-util-subtokenize-2.1.0.tgz",
++      "integrity": "sha512-XQLu552iSctvnEcgXw6+Sx75GflAPNED1qx7eBJ+wydBb2KCbRZe+NwvIEEMM83uml1+2WSXpBAcp9IUCgCYWA==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "devlop": "^1.0.0",
++        "micromark-util-chunked": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      }
++    },
++    "node_modules/micromark-util-symbol": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/micromark-util-symbol/-/micromark-util-symbol-2.0.1.tgz",
++      "integrity": "sha512-vs5t8Apaud9N28kgCrRUdEed4UJ+wWNvicHLPxCa9ENlYuAY31M0ETy5y1vA33YoNPDFTghEbnh6efaE8h4x0Q==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT"
++    },
++    "node_modules/micromark-util-types": {
++      "version": "2.0.2",
++      "resolved": "https://registry.npmjs.org/micromark-util-types/-/micromark-util-types-2.0.2.tgz",
++      "integrity": "sha512-Yw0ECSpJoViF1qTU4DC6NwtC4aWGt1EkzaQB8KPPyCRR8z9TWeV0HbEFGTO+ZY1wB22zmxnJqhPyTpOVCpeHTA==",
++      "funding": [
++        {
++          "type": "GitHub Sponsors",
++          "url": "https://github.com/sponsors/unifiedjs"
++        },
++        {
++          "type": "OpenCollective",
++          "url": "https://opencollective.com/unified"
++        }
++      ],
++      "license": "MIT"
++    },
++    "node_modules/micromatch": {
++      "version": "4.0.8",
++      "resolved": "https://registry.npmjs.org/micromatch/-/micromatch-4.0.8.tgz",
++      "integrity": "sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "braces": "^3.0.3",
++        "picomatch": "^2.3.1"
++      },
++      "engines": {
++        "node": ">=8.6"
++      }
++    },
++    "node_modules/micromatch/node_modules/picomatch": {
++      "version": "2.3.2",
++      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
++      "integrity": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=8.6"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/jonschlinkert"
++      }
++    },
++    "node_modules/ms": {
++      "version": "2.1.3",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
++      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
++      "license": "MIT"
++    },
++    "node_modules/mz": {
++      "version": "2.7.0",
++      "resolved": "https://registry.npmjs.org/mz/-/mz-2.7.0.tgz",
++      "integrity": "sha512-z81GNO7nnYMEhrGh9LeymoE4+Yr0Wn5McHIZMK5cfQCl+NDX08sCZgUc9/6MHni9IWuFLm1Z3HTCXu2z9fN62Q==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "any-promise": "^1.0.0",
++        "object-assign": "^4.0.1",
++        "thenify-all": "^1.0.0"
++      }
++    },
++    "node_modules/nanoid": {
++      "version": "3.3.15",
++      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.15.tgz",
++      "integrity": "sha512-y7Wygv/7mEOvxTuEQDB8StXdMRBWf1kR/tlhAzBRUFkB2jfcLOAxO/SHmOO2zgz1pVgK29/kyupn059/bCHdjA==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "bin": {
++        "nanoid": "bin/nanoid.cjs"
++      },
++      "engines": {
++        "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
++      }
++    },
++    "node_modules/node-releases": {
++      "version": "2.0.50",
++      "resolved": "https://registry.npmjs.org/node-releases/-/node-releases-2.0.50.tgz",
++      "integrity": "sha512-J6l92tKHX6w8Jy5nO1Vuc01NoIiRGi/d6qBKVxh+IQ8Cr3b6HbVNfKiF8ZpFKufTwpwxMmce2W3iQZ861ZRyTg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/normalize-path": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/normalize-path/-/normalize-path-3.0.0.tgz",
++      "integrity": "sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
+       }
+     },
+     "node_modules/object-assign": {
+@@ -1820,6 +3001,31 @@
+         }
+       }
+     },
++    "node_modules/parse-entities": {
++      "version": "4.0.2",
++      "resolved": "https://registry.npmjs.org/parse-entities/-/parse-entities-4.0.2.tgz",
++      "integrity": "sha512-GG2AQYWoLgL877gQIKeRPGO1xF9+eG1ujIb5soS5gPvLQ1y2o8FL90w2QWNdf9I361Mpp7726c+lj3U0qK1uGw==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^2.0.0",
++        "character-entities-legacy": "^3.0.0",
++        "character-reference-invalid": "^2.0.0",
++        "decode-named-character-reference": "^1.0.0",
++        "is-alphanumerical": "^2.0.0",
++        "is-decimal": "^2.0.0",
++        "is-hexadecimal": "^2.0.0"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
++    "node_modules/parse-entities/node_modules/@types/unist": {
++      "version": "2.0.11",
++      "resolved": "https://registry.npmjs.org/@types/unist/-/unist-2.0.11.tgz",
++      "integrity": "sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA==",
++      "license": "MIT"
++    },
+     "node_modules/path-parse": {
+       "version": "1.0.7",
+       "resolved": "https://registry.npmjs.org/path-parse/-/path-parse-1.0.7.tgz",
+@@ -2030,6 +3236,16 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/property-information": {
++      "version": "7.2.0",
++      "resolved": "https://registry.npmjs.org/property-information/-/property-information-7.2.0.tgz",
++      "integrity": "sha512-IAtzIB6sUiWaJYrX9smp3V46pBGbBeLFRGdh25kg1334VcBlD8HzhPeNIWQH9zhGmo2itIe25EHt9dQP7G5hmg==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
+     "node_modules/queue-microtask": {
+       "version": "1.2.3",
+       "resolved": "https://registry.npmjs.org/queue-microtask/-/queue-microtask-1.2.3.tgz",
+@@ -2072,6 +3288,33 @@
+         "react": "^19.2.7"
+       }
+     },
++    "node_modules/react-markdown": {
++      "version": "10.1.0",
++      "resolved": "https://registry.npmjs.org/react-markdown/-/react-markdown-10.1.0.tgz",
++      "integrity": "sha512-qKxVopLT/TyA6BX3Ue5NwabOsAzm0Q7kAPwq6L+wWDwisYs7R8vZ0nRXqq6rkueboxpkjvLGU9fWifiX/ZZFxQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0",
++        "@types/mdast": "^4.0.0",
++        "devlop": "^1.0.0",
++        "hast-util-to-jsx-runtime": "^2.0.0",
++        "html-url-attributes": "^3.0.0",
++        "mdast-util-to-hast": "^13.0.0",
++        "remark-parse": "^11.0.0",
++        "remark-rehype": "^11.0.0",
++        "unified": "^11.0.0",
++        "unist-util-visit": "^5.0.0",
++        "vfile": "^6.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      },
++      "peerDependencies": {
++        "@types/react": ">=18",
++        "react": ">=18"
++      }
++    },
+     "node_modules/read-cache": {
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/read-cache/-/read-cache-1.0.0.tgz",
+@@ -2108,6 +3351,72 @@
+         "url": "https://github.com/sponsors/jonschlinkert"
+       }
+     },
++    "node_modules/remark-gfm": {
++      "version": "4.0.1",
++      "resolved": "https://registry.npmjs.org/remark-gfm/-/remark-gfm-4.0.1.tgz",
++      "integrity": "sha512-1quofZ2RQ9EWdeN34S79+KExV1764+wCUGop5CPL1WGdD0ocPpu91lzPGbwWMECpEpd42kJGQwzRfyov9j4yNg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "mdast-util-gfm": "^3.0.0",
++        "micromark-extension-gfm": "^3.0.0",
++        "remark-parse": "^11.0.0",
++        "remark-stringify": "^11.0.0",
++        "unified": "^11.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/remark-parse": {
++      "version": "11.0.0",
++      "resolved": "https://registry.npmjs.org/remark-parse/-/remark-parse-11.0.0.tgz",
++      "integrity": "sha512-FCxlKLNGknS5ba/1lmpYijMUzX2esxW5xQqjWxw2eHFfS2MSdaHVINFmhjo+qN1WhZhNimq0dZATN9pH0IDrpA==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "mdast-util-from-markdown": "^2.0.0",
++        "micromark-util-types": "^2.0.0",
++        "unified": "^11.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/remark-rehype": {
++      "version": "11.1.2",
++      "resolved": "https://registry.npmjs.org/remark-rehype/-/remark-rehype-11.1.2.tgz",
++      "integrity": "sha512-Dh7l57ianaEoIpzbp0PC9UKAdCSVklD8E5Rpw7ETfbTl3FqcOOgq5q2LVDhgGCkaBv7p24JXikPdvhhmHvKMsw==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0",
++        "@types/mdast": "^4.0.0",
++        "mdast-util-to-hast": "^13.0.0",
++        "unified": "^11.0.0",
++        "vfile": "^6.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/remark-stringify": {
++      "version": "11.0.0",
++      "resolved": "https://registry.npmjs.org/remark-stringify/-/remark-stringify-11.0.0.tgz",
++      "integrity": "sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "mdast-util-to-markdown": "^2.0.0",
++        "unified": "^11.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
+     "node_modules/resolve": {
+       "version": "1.22.12",
+       "resolved": "https://registry.npmjs.org/resolve/-/resolve-1.22.12.tgz",
+@@ -2215,6 +3524,48 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/space-separated-tokens": {
++      "version": "2.0.2",
++      "resolved": "https://registry.npmjs.org/space-separated-tokens/-/space-separated-tokens-2.0.2.tgz",
++      "integrity": "sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
++    "node_modules/stringify-entities": {
++      "version": "4.0.4",
++      "resolved": "https://registry.npmjs.org/stringify-entities/-/stringify-entities-4.0.4.tgz",
++      "integrity": "sha512-IwfBptatlO+QCJUo19AqvrPNqlVMpW9YEL2LIVY+Rpv2qsjCGxaDLNRgeGsQWJhfItebuJhsGSLjaBbNSQ+ieg==",
++      "license": "MIT",
++      "dependencies": {
++        "character-entities-html4": "^2.0.0",
++        "character-entities-legacy": "^3.0.0"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
++    "node_modules/style-to-js": {
++      "version": "1.1.21",
++      "resolved": "https://registry.npmjs.org/style-to-js/-/style-to-js-1.1.21.tgz",
++      "integrity": "sha512-RjQetxJrrUJLQPHbLku6U/ocGtzyjbJMP9lCNK7Ag0CNh690nSH8woqWH9u16nMjYBAok+i7JO1NP2pOy8IsPQ==",
++      "license": "MIT",
++      "dependencies": {
++        "style-to-object": "1.0.14"
++      }
++    },
++    "node_modules/style-to-object": {
++      "version": "1.0.14",
++      "resolved": "https://registry.npmjs.org/style-to-object/-/style-to-object-1.0.14.tgz",
++      "integrity": "sha512-LIN7rULI0jBscWQYaSswptyderlarFkjQ+t79nzty8tcIAceVomEVlLzH5VP4Cmsv6MtKhs7qaAiwlcp+Mgaxw==",
++      "license": "MIT",
++      "dependencies": {
++        "inline-style-parser": "0.2.7"
++      }
++    },
+     "node_modules/sucrase": {
+       "version": "3.35.1",
+       "resolved": "https://registry.npmjs.org/sucrase/-/sucrase-3.35.1.tgz",
+@@ -2342,6 +3693,26 @@
+         "node": ">=8.0"
+       }
+     },
++    "node_modules/trim-lines": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/trim-lines/-/trim-lines-3.0.1.tgz",
++      "integrity": "sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
++    "node_modules/trough": {
++      "version": "2.2.0",
++      "resolved": "https://registry.npmjs.org/trough/-/trough-2.2.0.tgz",
++      "integrity": "sha512-tmMpK00BjZiUyVyvrBK7knerNgmgvcV/KLVyuma/SC+TQN167GrMRciANTz09+k3zW8L8t60jWO1GpfkZdjTaw==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
+     "node_modules/ts-interface-checker": {
+       "version": "0.1.13",
+       "resolved": "https://registry.npmjs.org/ts-interface-checker/-/ts-interface-checker-0.1.13.tgz",
+@@ -2357,6 +3728,93 @@
+       "license": "0BSD",
+       "optional": true
+     },
++    "node_modules/unified": {
++      "version": "11.0.5",
++      "resolved": "https://registry.npmjs.org/unified/-/unified-11.0.5.tgz",
++      "integrity": "sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^3.0.0",
++        "bail": "^2.0.0",
++        "devlop": "^1.0.0",
++        "extend": "^3.0.0",
++        "is-plain-obj": "^4.0.0",
++        "trough": "^2.0.0",
++        "vfile": "^6.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/unist-util-is": {
++      "version": "6.0.1",
++      "resolved": "https://registry.npmjs.org/unist-util-is/-/unist-util-is-6.0.1.tgz",
++      "integrity": "sha512-LsiILbtBETkDz8I9p1dQ0uyRUWuaQzd/cuEeS1hoRSyW5E5XGmTzlwY1OrNzzakGowI9Dr/I8HVaw4hTtnxy8g==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^3.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/unist-util-position": {
++      "version": "5.0.0",
++      "resolved": "https://registry.npmjs.org/unist-util-position/-/unist-util-position-5.0.0.tgz",
++      "integrity": "sha512-fucsC7HjXvkB5R3kTCO7kUjRdrS0BJt3M/FPxmHMBOm8JQi2BsHAHFsy27E0EolP8rp0NzXsJ+jNPyDWvOJZPA==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^3.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/unist-util-stringify-position": {
++      "version": "4.0.0",
++      "resolved": "https://registry.npmjs.org/unist-util-stringify-position/-/unist-util-stringify-position-4.0.0.tgz",
++      "integrity": "sha512-0ASV06AAoKCDkS2+xw5RXJywruurpbC4JZSm7nr7MOt1ojAzvyyaO+UxZf18j8FCF6kmzCZKcAgN/yu2gm2XgQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^3.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/unist-util-visit": {
++      "version": "5.1.0",
++      "resolved": "https://registry.npmjs.org/unist-util-visit/-/unist-util-visit-5.1.0.tgz",
++      "integrity": "sha512-m+vIdyeCOpdr/QeQCu2EzxX/ohgS8KbnPDgFni4dQsfSCtpz8UqDyY5GjRru8PDKuYn7Fq19j1CQ+nJSsGKOzg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^3.0.0",
++        "unist-util-is": "^6.0.0",
++        "unist-util-visit-parents": "^6.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/unist-util-visit-parents": {
++      "version": "6.0.2",
++      "resolved": "https://registry.npmjs.org/unist-util-visit-parents/-/unist-util-visit-parents-6.0.2.tgz",
++      "integrity": "sha512-goh1s1TBrqSqukSc8wrjwWhL0hiJxgA8m4kFxGlQ+8FYQ3C/m11FcTs4YYem7V664AhHVvgoQLk890Ssdsr2IQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^3.0.0",
++        "unist-util-is": "^6.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
+     "node_modules/update-browserslist-db": {
+       "version": "1.2.3",
+       "resolved": "https://registry.npmjs.org/update-browserslist-db/-/update-browserslist-db-1.2.3.tgz",
+@@ -2395,6 +3853,34 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/vfile": {
++      "version": "6.0.3",
++      "resolved": "https://registry.npmjs.org/vfile/-/vfile-6.0.3.tgz",
++      "integrity": "sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^3.0.0",
++        "vfile-message": "^4.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/vfile-message": {
++      "version": "4.0.3",
++      "resolved": "https://registry.npmjs.org/vfile-message/-/vfile-message-4.0.3.tgz",
++      "integrity": "sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^3.0.0",
++        "unist-util-stringify-position": "^4.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
+     "node_modules/vite": {
+       "version": "8.1.3",
+       "resolved": "https://registry.npmjs.org/vite/-/vite-8.1.3.tgz",
+@@ -2472,6 +3958,16 @@
+           "optional": true
+         }
+       }
++    },
++    "node_modules/zwitch": {
++      "version": "2.0.4",
++      "resolved": "https://registry.npmjs.org/zwitch/-/zwitch-2.0.4.tgz",
++      "integrity": "sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
+     }
+   }
+ }
+diff --git a/frontend/package.json b/frontend/package.json
+index 2d1defa..f4c847a 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -11,7 +11,9 @@
+   },
+   "dependencies": {
+     "react": "^19.2.7",
+-    "react-dom": "^19.2.7"
++    "react-dom": "^19.2.7",
++    "react-markdown": "^10.1.0",
++    "remark-gfm": "^4.0.1"
+   },
+   "devDependencies": {
+     "@types/react": "^19.2.17",
+diff --git a/frontend/src/App.css b/frontend/src/App.css
+index f90339d..8370ec6 100644
+--- a/frontend/src/App.css
++++ b/frontend/src/App.css
+@@ -1,184 +1 @@
+-.counter {
+-  font-size: 16px;
+-  padding: 5px 10px;
+-  border-radius: 5px;
+-  color: var(--accent);
+-  background: var(--accent-bg);
+-  border: 2px solid transparent;
+-  transition: border-color 0.3s;
+-  margin-bottom: 24px;
+-
+-  &:hover {
+-    border-color: var(--accent-border);
+-  }
+-  &:focus-visible {
+-    outline: 2px solid var(--accent);
+-    outline-offset: 2px;
+-  }
+-}
+-
+-.hero {
+-  position: relative;
+-
+-  .base,
+-  .framework,
+-  .vite {
+-    inset-inline: 0;
+-    margin: 0 auto;
+-  }
+-
+-  .base {
+-    width: 170px;
+-    position: relative;
+-    z-index: 0;
+-  }
+-
+-  .framework,
+-  .vite {
+-    position: absolute;
+-  }
+-
+-  .framework {
+-    z-index: 1;
+-    top: 34px;
+-    height: 28px;
+-    transform: perspective(2000px) rotateZ(300deg) rotateX(44deg) rotateY(39deg)
+-      scale(1.4);
+-  }
+-
+-  .vite {
+-    z-index: 0;
+-    top: 107px;
+-    height: 26px;
+-    width: auto;
+-    transform: perspective(2000px) rotateZ(300deg) rotateX(40deg) rotateY(39deg)
+-      scale(0.8);
+-  }
+-}
+-
+-#center {
+-  display: flex;
+-  flex-direction: column;
+-  gap: 25px;
+-  place-content: center;
+-  place-items: center;
+-  flex-grow: 1;
+-
+-  @media (max-width: 1024px) {
+-    padding: 32px 20px 24px;
+-    gap: 18px;
+-  }
+-}
+-
+-#next-steps {
+-  display: flex;
+-  border-top: 1px solid var(--border);
+-  text-align: left;
+-
+-  & > div {
+-    flex: 1 1 0;
+-    padding: 32px;
+-    @media (max-width: 1024px) {
+-      padding: 24px 20px;
+-    }
+-  }
+-
+-  .icon {
+-    margin-bottom: 16px;
+-    width: 22px;
+-    height: 22px;
+-  }
+-
+-  @media (max-width: 1024px) {
+-    flex-direction: column;
+-    text-align: center;
+-  }
+-}
+-
+-#docs {
+-  border-right: 1px solid var(--border);
+-
+-  @media (max-width: 1024px) {
+-    border-right: none;
+-    border-bottom: 1px solid var(--border);
+-  }
+-}
+-
+-#next-steps ul {
+-  list-style: none;
+-  padding: 0;
+-  display: flex;
+-  gap: 8px;
+-  margin: 32px 0 0;
+-
+-  .logo {
+-    height: 18px;
+-  }
+-
+-  a {
+-    color: var(--text-h);
+-    font-size: 16px;
+-    border-radius: 6px;
+-    background: var(--social-bg);
+-    display: flex;
+-    padding: 6px 12px;
+-    align-items: center;
+-    gap: 8px;
+-    text-decoration: none;
+-    transition: box-shadow 0.3s;
+-
+-    &:hover {
+-      box-shadow: var(--shadow);
+-    }
+-    .button-icon {
+-      height: 18px;
+-      width: 18px;
+-    }
+-  }
+-
+-  @media (max-width: 1024px) {
+-    margin-top: 20px;
+-    flex-wrap: wrap;
+-    justify-content: center;
+-
+-    li {
+-      flex: 1 1 calc(50% - 8px);
+-    }
+-
+-    a {
+-      width: 100%;
+-      justify-content: center;
+-      box-sizing: border-box;
+-    }
+-  }
+-}
+-
+-#spacer {
+-  height: 88px;
+-  border-top: 1px solid var(--border);
+-  @media (max-width: 1024px) {
+-    height: 48px;
+-  }
+-}
+-
+-.ticks {
+-  position: relative;
+-  width: 100%;
+-
+-  &::before,
+-  &::after {
+-    content: '';
+-    position: absolute;
+-    top: -4.5px;
+-    border: 5px solid transparent;
+-  }
+-
+-  &::before {
+-    left: 0;
+-    border-left-color: var(--border);
+-  }
+-  &::after {
+-    right: 0;
+-    border-right-color: var(--border);
+-  }
+-}
++/* App-level overrides ΓÇö kept minimal, design system is in index.css */
+diff --git a/frontend/src/App.jsx b/frontend/src/App.jsx
+index e2a2c0f..91a5fbb 100644
+--- a/frontend/src/App.jsx
++++ b/frontend/src/App.jsx
+@@ -1,27 +1,65 @@
+-import React, { useState } from 'react';
++import React, { useState, useEffect } from 'react';
+ import Sidebar from './components/Sidebar';
+ import Console from './views/Console';
+ import Inspector from './views/Inspector';
+ import Catalog from './views/Catalog';
++import Studio from './views/Studio';
++import './App.css';
+ 
+ export default function App() {
+   const [activeView, setActiveView] = useState('console');
++  const [packs, setPacks] = useState([]);
++
++  useEffect(() => {
++    fetch('/api/packs')
++      .then(res => res.json())
++      .then(data => setPacks(data.packs || []))
++      .catch(() => setPacks([]));
++  }, []);
++
++  const refreshPacks = () => {
++    fetch('/api/packs')
++      .then(res => res.json())
++      .then(data => setPacks(data.packs || []))
++      .catch(() => {});
++  };
++
++  const renderView = () => {
++    switch (activeView) {
++      case 'console':
++        return <Console packs={packs} />;
++      case 'inspector':
++        return <Inspector />;
++      case 'catalog':
++        return <Catalog packs={packs} />;
++      case 'studio':
++        return <Studio packs={packs} onPacksChanged={refreshPacks} />;
++      default:
++        return <Console packs={packs} />;
++    }
++  };
+ 
+   return (
+-    <div className="flex h-screen bg-[#0d1117] text-[#c9d1d9] font-sans selection:bg-[#58a6ff]/30">
+-      <Sidebar activeView={activeView} setActiveView={setActiveView} />
+-      
+-      {activeView === 'console' && <Console />}
+-      {activeView === 'inspector' && <Inspector />}
+-      {activeView === 'catalog' && <Catalog />}
+-      {activeView === 'studio' && (
+-        <div className="flex-1 flex items-center justify-center">
+-           <div className="text-center">
+-             <h2 className="text-2xl font-bold text-white mb-2">Pack Studio</h2>
+-             <p className="text-[#8b949e]">The hot-reload editor is under construction.</p>
+-           </div>
+-        </div>
+-      )}
++    <div style={{
++      display: 'flex',
++      height: '100vh',
++      width: '100vw',
++      overflow: 'hidden',
++      background: 'var(--bg-base)',
++    }}>
++      <Sidebar
++        activeView={activeView}
++        onNavigate={setActiveView}
++        packCount={packs.length}
++      />
++      <main style={{
++        flex: 1,
++        overflow: 'hidden',
++        display: 'flex',
++        flexDirection: 'column',
++      }}>
++        {renderView()}
++      </main>
+     </div>
+   );
+ }
+diff --git a/frontend/src/components/Sidebar.jsx b/frontend/src/components/Sidebar.jsx
+index c3a8719..c62b464 100644
+--- a/frontend/src/components/Sidebar.jsx
++++ b/frontend/src/components/Sidebar.jsx
+@@ -1,49 +1,174 @@
+ import React from 'react';
+ 
+-export default function Sidebar({ activeView, setActiveView }) {
+-  const navItems = [
+-    { id: 'console', label: 'Console', icon: '≡ƒÆ¼' },
+-    { id: 'inspector', label: 'Inspector', icon: '≡ƒöì' },
+-    { id: 'catalog', label: 'Catalog', icon: '≡ƒôÜ' },
+-    { id: 'studio', label: 'Pack Studio', icon: '≡ƒ¢á∩╕Å' },
+-  ];
++const navItems = [
++  { id: 'console', label: 'Console', icon: 'ΓÜí', desc: 'Chat with clerks' },
++  { id: 'catalog', label: 'Catalog', icon: '≡ƒôª', desc: 'Browse packs' },
++  { id: 'inspector', label: 'Inspector', icon: '≡ƒôè', desc: 'View ledger' },
++  { id: 'studio', label: 'Studio', icon: '≡ƒöº', desc: 'Edit packs' },
++];
+ 
++export default function Sidebar({ activeView, onNavigate, packCount = 0 }) {
+   return (
+-    <div className="w-64 h-screen bg-[#161b22] border-r border-[#30363d] flex flex-col">
+-      <div className="p-6">
+-        <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+-          <span className="text-[#58a6ff]">≡ƒÅ░</span> GuildHouse
+-        </h1>
+-        <p className="text-xs text-[#8b949e] mt-1">Sovereign AI Appliance</p>
++    <aside style={{
++      width: 'var(--sidebar-width)',
++      minWidth: 'var(--sidebar-width)',
++      height: '100vh',
++      background: 'var(--bg-primary)',
++      borderRight: '1px solid var(--border-subtle)',
++      display: 'flex',
++      flexDirection: 'column',
++      position: 'relative',
++      zIndex: 10,
++    }}>
++      {/* Branding */}
++      <div style={{
++        padding: '24px 20px 20px',
++        borderBottom: '1px solid var(--border-subtle)',
++      }}>
++        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
++          <div style={{
++            width: '38px',
++            height: '38px',
++            borderRadius: 'var(--radius-md)',
++            background: 'var(--accent-gradient)',
++            display: 'flex',
++            alignItems: 'center',
++            justifyContent: 'center',
++            fontSize: '18px',
++            fontWeight: '800',
++            color: 'white',
++            boxShadow: 'var(--accent-glow)',
++          }}>
++            G
++          </div>
++          <div>
++            <h1 className="gradient-text" style={{
++              fontSize: '18px',
++              fontWeight: '800',
++              letterSpacing: '-0.02em',
++              lineHeight: 1.2,
++            }}>
++              GuildHouse
++            </h1>
++            <p style={{
++              fontSize: '11px',
++              color: 'var(--text-muted)',
++              fontWeight: '500',
++              letterSpacing: '0.04em',
++              textTransform: 'uppercase',
++            }}>
++              Sovereign Runtime
++            </p>
++          </div>
++        </div>
+       </div>
+ 
+-      <nav className="flex-1 px-4 space-y-2">
+-        {navItems.map((item) => (
+-          <button
+-            key={item.id}
+-            onClick={() => setActiveView(item.id)}
+-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+-              activeView === item.id
+-                ? 'bg-[#1f6feb] text-white'
+-                : 'text-[#c9d1d9] hover:bg-[#21262d] hover:text-white'
+-            }`}
+-          >
+-            <span className="text-lg">{item.icon}</span>
+-            {item.label}
+-          </button>
+-        ))}
++      {/* Navigation */}
++      <nav style={{
++        padding: '12px 10px',
++        flex: 1,
++        display: 'flex',
++        flexDirection: 'column',
++        gap: '4px',
++      }}>
++        <p style={{
++          fontSize: '10px',
++          fontWeight: '600',
++          color: 'var(--text-muted)',
++          textTransform: 'uppercase',
++          letterSpacing: '0.08em',
++          padding: '8px 12px 6px',
++        }}>
++          Navigation
++        </p>
++        {navItems.map(item => {
++          const isActive = activeView === item.id;
++          return (
++            <button
++              key={item.id}
++              onClick={() => onNavigate(item.id)}
++              style={{
++                display: 'flex',
++                alignItems: 'center',
++                gap: '12px',
++                padding: '10px 14px',
++                borderRadius: 'var(--radius-md)',
++                border: 'none',
++                cursor: 'pointer',
++                transition: 'all var(--transition-fast)',
++                background: isActive
++                  ? 'rgba(99, 102, 241, 0.12)'
++                  : 'transparent',
++                color: isActive
++                  ? 'var(--accent-indigo)'
++                  : 'var(--text-secondary)',
++                borderLeft: isActive
++                  ? '2px solid var(--accent-indigo)'
++                  : '2px solid transparent',
++                fontFamily: 'var(--font-sans)',
++                fontSize: '14px',
++                fontWeight: isActive ? '600' : '500',
++                width: '100%',
++                textAlign: 'left',
++              }}
++              onMouseEnter={e => {
++                if (!isActive) {
++                  e.currentTarget.style.background = 'var(--bg-hover)';
++                  e.currentTarget.style.color = 'var(--text-primary)';
++                }
++              }}
++              onMouseLeave={e => {
++                if (!isActive) {
++                  e.currentTarget.style.background = 'transparent';
++                  e.currentTarget.style.color = 'var(--text-secondary)';
++                }
++              }}
++            >
++              <span style={{ fontSize: '16px', width: '22px', textAlign: 'center' }}>{item.icon}</span>
++              <div>
++                <div>{item.label}</div>
++                <div style={{
++                  fontSize: '11px',
++                  color: 'var(--text-muted)',
++                  fontWeight: '400',
++                  marginTop: '1px',
++                }}>{item.desc}</div>
++              </div>
++            </button>
++          );
++        })}
+       </nav>
+ 
+-      <div className="p-4 border-t border-[#30363d]">
+-        <div className="bg-[#0d1117] rounded-lg p-3 border border-[#30363d]">
+-          <p className="text-xs text-[#8b949e] mb-1">Resident Brain</p>
+-          <div className="flex items-center gap-2">
+-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+-            <p className="text-sm text-white font-medium">Gemma 2</p>
+-          </div>
+-          <p className="text-xs text-[#58a6ff] mt-1">ROCm Accelerated</p>
++      {/* Status Footer */}
++      <div style={{
++        padding: '16px 20px',
++        borderTop: '1px solid var(--border-subtle)',
++      }}>
++        <div style={{
++          display: 'flex',
++          alignItems: 'center',
++          gap: '8px',
++          marginBottom: '8px',
++        }}>
++          <div style={{
++            width: '7px',
++            height: '7px',
++            borderRadius: '50%',
++            background: 'var(--success)',
++            boxShadow: '0 0 6px rgba(16, 185, 129, 0.5)',
++            animation: 'pulse-glow 2s infinite',
++          }} />
++          <span style={{ fontSize: '12px', color: 'var(--success)', fontWeight: '500' }}>
++            System Online
++          </span>
++        </div>
++        <div style={{
++          fontSize: '11px',
++          color: 'var(--text-muted)',
++        }}>
++          {packCount} pack{packCount !== 1 ? 's' : ''} loaded
+         </div>
+       </div>
+-    </div>
++    </aside>
+   );
+ }
+diff --git a/frontend/src/index.css b/frontend/src/index.css
+index d3d8a3b..a024d14 100644
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -1,14 +1,432 @@
+-@tailwind base;
+-@tailwind components;
+-@tailwind utilities;
++/* ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
++   GuildHouse Design System
++   Premium dark theme with indigo/purple accents
++   ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ */
+ 
+-body {
++:root {
++  /* Backgrounds */
++  --bg-base: #06080f;
++  --bg-primary: #0a0e1a;
++  --bg-secondary: #0f1525;
++  --bg-surface: #141c30;
++  --bg-elevated: #1a2440;
++  --bg-hover: #1e2a48;
++
++  /* Borders */
++  --border-subtle: rgba(99, 102, 241, 0.1);
++  --border-default: rgba(99, 102, 241, 0.2);
++  --border-hover: rgba(99, 102, 241, 0.35);
++  --border-active: rgba(139, 92, 246, 0.5);
++
++  /* Text */
++  --text-primary: #e8edf5;
++  --text-secondary: #94a3b8;
++  --text-muted: #64748b;
++  --text-inverse: #0a0e1a;
++
++  /* Accents */
++  --accent-indigo: #6366f1;
++  --accent-purple: #8b5cf6;
++  --accent-violet: #a855f7;
++  --accent-blue: #3b82f6;
++  --accent-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
++  --accent-glow: 0 0 20px rgba(99, 102, 241, 0.3);
++
++  /* Semantic */
++  --success: #10b981;
++  --success-bg: rgba(16, 185, 129, 0.1);
++  --warning: #f59e0b;
++  --warning-bg: rgba(245, 158, 11, 0.1);
++  --danger: #ef4444;
++  --danger-bg: rgba(239, 68, 68, 0.1);
++  --info: #3b82f6;
++  --info-bg: rgba(59, 130, 246, 0.1);
++
++  /* Typography */
++  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
++  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
++
++  /* Spacing */
++  --radius-sm: 6px;
++  --radius-md: 10px;
++  --radius-lg: 16px;
++  --radius-xl: 20px;
++  --radius-full: 9999px;
++
++  /* Transitions */
++  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
++  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
++  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
++
++  /* Sidebar */
++  --sidebar-width: 260px;
++}
++
++/* ΓöÇΓöÇ Reset ΓöÇΓöÇ */
++
++*, *::before, *::after {
+   margin: 0;
+-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+-    sans-serif;
++  padding: 0;
++  box-sizing: border-box;
++}
++
++html, body, #root {
++  height: 100%;
++  width: 100%;
++  overflow: hidden;
++}
++
++body {
++  font-family: var(--font-sans);
++  background: var(--bg-base);
++  color: var(--text-primary);
+   -webkit-font-smoothing: antialiased;
+   -moz-osx-font-smoothing: grayscale;
+-  background-color: #0d1117;
+-  color: #c9d1d9;
++  line-height: 1.5;
++}
++
++/* ΓöÇΓöÇ Scrollbar ΓöÇΓöÇ */
++
++::-webkit-scrollbar {
++  width: 6px;
++  height: 6px;
++}
++
++::-webkit-scrollbar-track {
++  background: transparent;
++}
++
++::-webkit-scrollbar-thumb {
++  background: rgba(99, 102, 241, 0.2);
++  border-radius: var(--radius-full);
++}
++
++::-webkit-scrollbar-thumb:hover {
++  background: rgba(99, 102, 241, 0.4);
++}
++
++/* ΓöÇΓöÇ Animations ΓöÇΓöÇ */
++
++@keyframes fadeIn {
++  from { opacity: 0; transform: translateY(8px); }
++  to { opacity: 1; transform: translateY(0); }
++}
++
++@keyframes fadeInLeft {
++  from { opacity: 0; transform: translateX(-12px); }
++  to { opacity: 1; transform: translateX(0); }
++}
++
++@keyframes fadeInRight {
++  from { opacity: 0; transform: translateX(12px); }
++  to { opacity: 1; transform: translateX(0); }
++}
++
++@keyframes slideUp {
++  from { opacity: 0; transform: translateY(20px); }
++  to { opacity: 1; transform: translateY(0); }
++}
++
++@keyframes pulse-glow {
++  0%, 100% { box-shadow: 0 0 4px rgba(99, 102, 241, 0.3); }
++  50% { box-shadow: 0 0 12px rgba(99, 102, 241, 0.6); }
++}
++
++@keyframes shimmer {
++  0% { background-position: -200% center; }
++  100% { background-position: 200% center; }
++}
++
++@keyframes bounce-dot {
++  0%, 100% { transform: translateY(0); }
++  50% { transform: translateY(-6px); }
++}
++
++@keyframes gradient-shift {
++  0% { background-position: 0% 50%; }
++  50% { background-position: 100% 50%; }
++  100% { background-position: 0% 50%; }
++}
++
++@keyframes spin {
++  from { transform: rotate(0deg); }
++  to { transform: rotate(360deg); }
++}
++
++/* ΓöÇΓöÇ Utility Classes ΓöÇΓöÇ */
++
++.glass {
++  background: rgba(20, 28, 48, 0.6);
++  backdrop-filter: blur(12px);
++  -webkit-backdrop-filter: blur(12px);
++  border: 1px solid var(--border-subtle);
++}
++
++.glass-hover:hover {
++  background: rgba(26, 36, 64, 0.7);
++  border-color: var(--border-hover);
++}
++
++.gradient-text {
++  background: var(--accent-gradient);
++  -webkit-background-clip: text;
++  -webkit-text-fill-color: transparent;
++  background-clip: text;
++}
++
++.gradient-border {
++  position: relative;
++}
++
++.gradient-border::before {
++  content: '';
++  position: absolute;
++  inset: 0;
++  border-radius: inherit;
++  padding: 1px;
++  background: var(--accent-gradient);
++  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
++  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
++  -webkit-mask-composite: xor;
++  mask-composite: exclude;
++  opacity: 0.5;
++  transition: opacity var(--transition-normal);
++}
++
++.gradient-border:hover::before {
++  opacity: 1;
++}
++
++/* ΓöÇΓöÇ Button Styles ΓöÇΓöÇ */
++
++.btn-primary {
++  background: var(--accent-gradient);
++  color: white;
++  border: none;
++  padding: 10px 20px;
++  border-radius: var(--radius-md);
++  font-weight: 600;
++  font-size: 14px;
++  cursor: pointer;
++  transition: all var(--transition-fast);
++  font-family: var(--font-sans);
++}
++
++.btn-primary:hover {
++  transform: translateY(-1px);
++  box-shadow: var(--accent-glow);
++}
++
++.btn-primary:active {
++  transform: translateY(0);
++}
++
++.btn-primary:disabled {
++  opacity: 0.5;
++  cursor: not-allowed;
++  transform: none;
++}
++
++.btn-ghost {
++  background: transparent;
++  color: var(--text-secondary);
++  border: 1px solid var(--border-default);
++  padding: 8px 16px;
++  border-radius: var(--radius-md);
++  font-weight: 500;
++  font-size: 13px;
++  cursor: pointer;
++  transition: all var(--transition-fast);
++  font-family: var(--font-sans);
++}
++
++.btn-ghost:hover {
++  color: var(--text-primary);
++  border-color: var(--border-hover);
++  background: var(--bg-hover);
++}
++
++.btn-danger {
++  background: var(--danger);
++  color: white;
++  border: none;
++  padding: 8px 16px;
++  border-radius: var(--radius-md);
++  font-weight: 500;
++  font-size: 13px;
++  cursor: pointer;
++  transition: all var(--transition-fast);
++  font-family: var(--font-sans);
++}
++
++.btn-danger:hover {
++  background: #dc2626;
++}
++
++/* ΓöÇΓöÇ Badge Styles ΓöÇΓöÇ */
++
++.badge {
++  display: inline-flex;
++  align-items: center;
++  gap: 4px;
++  padding: 3px 8px;
++  border-radius: var(--radius-full);
++  font-size: 11px;
++  font-weight: 600;
++  letter-spacing: 0.02em;
++}
++
++.badge-success {
++  background: var(--success-bg);
++  color: var(--success);
++  border: 1px solid rgba(16, 185, 129, 0.2);
++}
++
++.badge-warning {
++  background: var(--warning-bg);
++  color: var(--warning);
++  border: 1px solid rgba(245, 158, 11, 0.2);
++}
++
++.badge-danger {
++  background: var(--danger-bg);
++  color: var(--danger);
++  border: 1px solid rgba(239, 68, 68, 0.2);
++}
++
++.badge-info {
++  background: var(--info-bg);
++  color: var(--info);
++  border: 1px solid rgba(59, 130, 246, 0.2);
++}
++
++.badge-accent {
++  background: rgba(99, 102, 241, 0.1);
++  color: var(--accent-indigo);
++  border: 1px solid rgba(99, 102, 241, 0.2);
++}
++
++/* ΓöÇΓöÇ Markdown Rendering ΓöÇΓöÇ */
++
++.markdown-body {
++  color: var(--text-primary);
++  line-height: 1.65;
++  word-wrap: break-word;
++}
++
++.markdown-body h1, .markdown-body h2, .markdown-body h3 {
++  color: var(--text-primary);
++  font-weight: 700;
++  margin-top: 1em;
++  margin-bottom: 0.5em;
++  line-height: 1.3;
++}
++
++.markdown-body h1 { font-size: 1.4em; }
++.markdown-body h2 { font-size: 1.2em; }
++.markdown-body h3 { font-size: 1.05em; }
++
++.markdown-body p {
++  margin-bottom: 0.7em;
++}
++
++.markdown-body p:last-child {
++  margin-bottom: 0;
++}
++
++.markdown-body ul, .markdown-body ol {
++  padding-left: 1.5em;
++  margin-bottom: 0.7em;
++}
++
++.markdown-body li {
++  margin-bottom: 0.25em;
++}
++
++.markdown-body li::marker {
++  color: var(--accent-indigo);
++}
++
++.markdown-body strong {
++  color: #f1f5f9;
++  font-weight: 600;
++}
++
++.markdown-body em {
++  color: var(--text-secondary);
++}
++
++.markdown-body code {
++  background: rgba(99, 102, 241, 0.1);
++  color: var(--accent-purple);
++  padding: 2px 6px;
++  border-radius: 4px;
++  font-family: var(--font-mono);
++  font-size: 0.87em;
++}
++
++.markdown-body pre {
++  background: var(--bg-primary);
++  border: 1px solid var(--border-subtle);
++  border-radius: var(--radius-md);
++  padding: 14px 18px;
++  margin: 0.7em 0;
++  overflow-x: auto;
++}
++
++.markdown-body pre code {
++  background: transparent;
++  color: var(--text-primary);
++  padding: 0;
++  font-size: 0.85em;
++}
++
++.markdown-body blockquote {
++  border-left: 3px solid var(--accent-indigo);
++  padding: 8px 16px;
++  margin: 0.7em 0;
++  background: rgba(99, 102, 241, 0.05);
++  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
++  color: var(--text-secondary);
++}
++
++.markdown-body table {
++  width: 100%;
++  border-collapse: collapse;
++  margin: 0.7em 0;
++  font-size: 0.9em;
++}
++
++.markdown-body th {
++  background: var(--bg-elevated);
++  color: var(--text-primary);
++  padding: 8px 12px;
++  text-align: left;
++  font-weight: 600;
++  border: 1px solid var(--border-default);
++}
++
++.markdown-body td {
++  padding: 7px 12px;
++  border: 1px solid var(--border-subtle);
++  color: var(--text-secondary);
++}
++
++.markdown-body tr:hover td {
++  background: rgba(99, 102, 241, 0.03);
++}
++
++.markdown-body hr {
++  border: none;
++  border-top: 1px solid var(--border-subtle);
++  margin: 1em 0;
++}
++
++.markdown-body a {
++  color: var(--accent-indigo);
++  text-decoration: none;
++}
++
++.markdown-body a:hover {
++  text-decoration: underline;
+ }
+diff --git a/frontend/src/views/Catalog.jsx b/frontend/src/views/Catalog.jsx
+index 21823fd..2facecf 100644
+--- a/frontend/src/views/Catalog.jsx
++++ b/frontend/src/views/Catalog.jsx
+@@ -1,44 +1,195 @@
+-import React, { useState, useEffect } from 'react';
++import React from 'react';
+ 
+-export default function Catalog() {
+-  const [packs, setPacks] = useState([]);
++export default function Catalog({ packs = [] }) {
++  return (
++    <div style={{
++      flex: 1,
++      display: 'flex',
++      flexDirection: 'column',
++      height: '100vh',
++      background: 'var(--bg-base)',
++    }}>
++      {/* Header */}
++      <div style={{
++        padding: '0 32px',
++        height: '60px',
++        minHeight: '60px',
++        borderBottom: '1px solid var(--border-subtle)',
++        display: 'flex',
++        alignItems: 'center',
++        justifyContent: 'space-between',
++        background: 'var(--bg-primary)',
++      }}>
++        <h2 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)' }}>
++          Capability Packs
++        </h2>
++        <span className="badge badge-accent">
++          {packs.length} pack{packs.length !== 1 ? 's' : ''} installed
++        </span>
++      </div>
+ 
+-  useEffect(() => {
+-    fetch('/api/packs')
+-      .then(res => res.json())
+-      .then(data => setPacks(data.packs));
+-  }, []);
++      {/* Content */}
++      <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px' }}>
++        <p style={{
++          color: 'var(--text-secondary)',
++          fontSize: '14px',
++          marginBottom: '24px',
++          maxWidth: '600px',
++        }}>
++          Each pack defines a specialized AI clerk with a unique persona, rules, tool grants, and escalation policies. Install a pack to deploy domain expertise.
++        </p>
+ 
+-  return (
+-    <div className="flex-1 flex flex-col h-screen bg-[#0d1117] overflow-y-auto">
+-      <div className="p-12">
+-        <h1 className="text-3xl font-bold text-white mb-2">Capability Packs</h1>
+-        <p className="text-[#8b949e] mb-8">Installed domain expertise for your sovereign runtime.</p>
+-        
+-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
++        <div style={{
++          display: 'grid',
++          gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
++          gap: '20px',
++        }}>
+           {packs.map((pack, idx) => (
+-            <div key={idx} className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 hover:border-[#8b949e] transition-colors">
+-              <div className="flex justify-between items-start mb-4">
+-                <h3 className="text-xl font-bold text-white">{pack.name}</h3>
+-                <span className="bg-[#238636]/20 text-[#3fb950] px-2 py-1 rounded text-xs font-bold border border-[#2ea043]/30">
+-                  v{pack.version}
+-                </span>
+-              </div>
+-              <p className="text-[#8b949e] text-sm mb-6 h-10">{pack.description}</p>
+-              
+-              <div className="space-y-3">
++            <div
++              key={idx}
++              className="gradient-border"
++              style={{
++                background: 'var(--bg-surface)',
++                borderRadius: 'var(--radius-lg)',
++                padding: '24px',
++                transition: 'all var(--transition-normal)',
++                animation: `fadeIn 0.4s ${idx * 0.1}s ease both`,
++                cursor: 'default',
++              }}
++              onMouseEnter={e => {
++                e.currentTarget.style.transform = 'translateY(-2px)';
++                e.currentTarget.style.boxShadow = '0 8px 30px rgba(99, 102, 241, 0.1)';
++              }}
++              onMouseLeave={e => {
++                e.currentTarget.style.transform = 'translateY(0)';
++                e.currentTarget.style.boxShadow = 'none';
++              }}
++            >
++              {/* Pack Header */}
++              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+                 <div>
+-                  <p className="text-xs text-[#8b949e] uppercase tracking-wider mb-1 font-semibold">Persona Voice</p>
+-                  <p className="text-sm text-[#c9d1d9] truncate">{pack.persona?.voice || 'Standard'}</p>
++                  <h3 className="gradient-text" style={{ fontSize: '18px', fontWeight: '700', marginBottom: '4px' }}>
++                    {pack.name}
++                  </h3>
++                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
++                    {pack.description}
++                  </p>
+                 </div>
+-                <div className="flex gap-2">
++                <span className="badge badge-success">v{pack.version}</span>
++              </div>
++
++              {/* Persona */}
++              <div style={{
++                background: 'var(--bg-primary)',
++                borderRadius: 'var(--radius-md)',
++                padding: '14px',
++                marginBottom: '16px',
++                border: '1px solid var(--border-subtle)',
++              }}>
++                <p style={{
++                  fontSize: '10px',
++                  fontWeight: '700',
++                  color: 'var(--text-muted)',
++                  textTransform: 'uppercase',
++                  letterSpacing: '0.08em',
++                  marginBottom: '6px',
++                }}>
++                  Persona
++                </p>
++                <p style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '4px' }}>
++                  <strong>Voice:</strong> {pack.persona?.voice || 'Standard'}
++                </p>
++                <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
++                  <strong>Stance:</strong> {pack.persona?.stance || 'Neutral'}
++                </p>
++              </div>
++
++              {/* Rules */}
++              {pack.rules?.length > 0 && (
++                <div style={{ marginBottom: '14px' }}>
++                  <p style={{
++                    fontSize: '10px',
++                    fontWeight: '700',
++                    color: 'var(--text-muted)',
++                    textTransform: 'uppercase',
++                    letterSpacing: '0.08em',
++                    marginBottom: '6px',
++                  }}>
++                    Rules ({pack.rules.length})
++                  </p>
++                  {pack.rules.map((rule, i) => (
++                    <div key={i} style={{
++                      fontSize: '12px',
++                      color: 'var(--text-secondary)',
++                      padding: '4px 0',
++                      paddingLeft: '12px',
++                      borderLeft: '2px solid var(--accent-indigo)',
++                      marginBottom: '4px',
++                    }}>
++                      {rule}
++                    </div>
++                  ))}
++                </div>
++              )}
++
++              {/* Footer: Languages & Tools */}
++              <div style={{
++                display: 'flex',
++                justifyContent: 'space-between',
++                alignItems: 'center',
++                paddingTop: '14px',
++                borderTop: '1px solid var(--border-subtle)',
++              }}>
++                <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                   {pack.languages?.map(lang => (
+-                     <span key={lang} className="bg-[#1f6feb]/20 text-[#58a6ff] px-2 py-0.5 rounded text-xs font-mono uppercase">
+-                       {lang}
+-                     </span>
++                    <span key={lang} style={{
++                      background: 'rgba(59, 130, 246, 0.1)',
++                      color: 'var(--accent-blue)',
++                      padding: '2px 8px',
++                      borderRadius: 'var(--radius-full)',
++                      fontSize: '11px',
++                      fontFamily: 'var(--font-mono)',
++                      fontWeight: '600',
++                      textTransform: 'uppercase',
++                    }}>
++                      {lang}
++                    </span>
++                  ))}
++                </div>
++                <div style={{ display: 'flex', gap: '5px' }}>
++                  {pack.tools?.map(tool => (
++                    <span key={tool} className="badge badge-accent">{tool}</span>
+                   ))}
+                 </div>
+               </div>
++
++              {/* Escalation Policy */}
++              {(pack.escalation_policy?.forbidden?.length > 0 || pack.escalation_policy?.redact_first?.length > 0) && (
++                <div style={{
++                  marginTop: '14px',
++                  paddingTop: '14px',
++                  borderTop: '1px solid var(--border-subtle)',
++                }}>
++                  <p style={{
++                    fontSize: '10px',
++                    fontWeight: '700',
++                    color: 'var(--text-muted)',
++                    textTransform: 'uppercase',
++                    letterSpacing: '0.08em',
++                    marginBottom: '8px',
++                  }}>
++                    Escalation Policy
++                  </p>
++                  <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
++                    {pack.escalation_policy?.forbidden?.map(f => (
++                      <span key={f} className="badge badge-danger">{f.replace(/_/g, ' ')}</span>
++                    ))}
++                    {pack.escalation_policy?.redact_first?.map(r => (
++                      <span key={r} className="badge badge-warning">redact: {r.replace(/_/g, ' ')}</span>
++                    ))}
++                  </div>
++                </div>
++              )}
+             </div>
+           ))}
+         </div>
+diff --git a/frontend/src/views/Console.jsx b/frontend/src/views/Console.jsx
+index b0f45ab..42785f5 100644
+--- a/frontend/src/views/Console.jsx
++++ b/frontend/src/views/Console.jsx
+@@ -1,24 +1,37 @@
+-import React, { useState, useEffect } from 'react';
++import React, { useState, useEffect, useRef } from 'react';
++import ReactMarkdown from 'react-markdown';
++import remarkGfm from 'remark-gfm';
+ 
+-export default function Console() {
++export default function Console({ packs = [] }) {
+   const [messages, setMessages] = useState([]);
+   const [input, setInput] = useState('');
+-  const [packs, setPacks] = useState([]);
+   const [selectedPack, setSelectedPack] = useState('');
++  const [sessionId, setSessionId] = useState(null);
+   const [loading, setLoading] = useState(false);
++  const messagesEndRef = useRef(null);
++  const inputRef = useRef(null);
+ 
+   useEffect(() => {
+-    fetch('/api/packs')
+-      .then(res => res.json())
+-      .then(data => {
+-        setPacks(data.packs);
+-        if (data.packs.length > 0) setSelectedPack(data.packs[0].name.toLowerCase().replace(' ', '_'));
+-      });
+-  }, []);
++    if (packs.length > 0 && !selectedPack) {
++      setSelectedPack(packs[0].name.toLowerCase().replace(/ /g, '_'));
++    }
++  }, [packs]);
++
++  useEffect(() => {
++    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
++  }, [messages, loading]);
++
++  const handlePackChange = (e) => {
++    setSelectedPack(e.target.value);
++    setSessionId(null);
++    setMessages([]);
++  };
++
++  const currentPack = packs.find(p => p.name.toLowerCase().replace(/ /g, '_') === selectedPack);
+ 
+   const handleSend = async (e) => {
+     e.preventDefault();
+-    if (!input.trim() || !selectedPack) return;
++    if (!input.trim() || !selectedPack || loading) return;
+ 
+     const userMsg = { role: 'user', content: input };
+     setMessages(prev => [...prev, userMsg]);
+@@ -29,69 +42,285 @@ export default function Console() {
+       const res = await fetch('/api/chat', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+-        body: JSON.stringify({ message: input, pack_id: selectedPack })
++        body: JSON.stringify({
++          message: input,
++          pack_id: selectedPack,
++          session_id: sessionId,
++        })
+       });
+       const data = await res.json();
+-      setMessages(prev => [...prev, { role: 'clerk', content: data.response }]);
++      if (data.session_id) setSessionId(data.session_id);
++
++      setMessages(prev => [...prev, {
++        role: 'clerk',
++        content: data.response,
++        metadata: data.metadata || {},
++      }]);
+     } catch (err) {
+-      setMessages(prev => [...prev, { role: 'clerk', content: 'Error communicating with the house.' }]);
++      setMessages(prev => [...prev, {
++        role: 'clerk',
++        content: 'Connection error. Is the backend running on port 8000?',
++        metadata: {},
++      }]);
+     }
+     setLoading(false);
++    setTimeout(() => inputRef.current?.focus(), 100);
+   };
+ 
+   return (
+-    <div className="flex-1 flex flex-col h-screen bg-[#0d1117]">
+-      <div className="h-16 border-b border-[#30363d] flex items-center justify-between px-8 bg-[#161b22]">
+-        <h2 className="text-xl font-semibold text-white">Live Console</h2>
+-        <select 
+-          value={selectedPack} 
+-          onChange={(e) => setSelectedPack(e.target.value)}
+-          className="bg-[#0d1117] border border-[#30363d] text-white text-sm rounded-lg px-4 py-2 focus:ring-[#58a6ff] focus:border-[#58a6ff]"
+-        >
+-          {packs.map(p => (
+-            <option key={p.name} value={p.name.toLowerCase().replace(' ', '_')}>{p.name}</option>
+-          ))}
+-        </select>
++    <div style={{
++      flex: 1,
++      display: 'flex',
++      flexDirection: 'column',
++      height: '100vh',
++      background: 'var(--bg-base)',
++    }}>
++      {/* Header */}
++      <div style={{
++        padding: '0 28px',
++        height: '60px',
++        minHeight: '60px',
++        borderBottom: '1px solid var(--border-subtle)',
++        display: 'flex',
++        alignItems: 'center',
++        justifyContent: 'space-between',
++        background: 'var(--bg-primary)',
++      }}>
++        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
++          <h2 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)' }}>
++            Live Console
++          </h2>
++          {currentPack && (
++            <span className="badge badge-accent">
++              {currentPack.persona?.voice?.split(',')[0] || 'Standard'}
++            </span>
++          )}
++        </div>
++        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
++          {sessionId && (
++            <span style={{
++              fontSize: '11px',
++              color: 'var(--text-muted)',
++              fontFamily: 'var(--font-mono)',
++            }}>
++              {sessionId.slice(0, 8)}
++            </span>
++          )}
++          <select
++            value={selectedPack}
++            onChange={handlePackChange}
++            style={{
++              background: 'var(--bg-surface)',
++              border: '1px solid var(--border-default)',
++              color: 'var(--text-primary)',
++              fontSize: '13px',
++              fontWeight: '500',
++              borderRadius: 'var(--radius-md)',
++              padding: '7px 14px',
++              outline: 'none',
++              cursor: 'pointer',
++              fontFamily: 'var(--font-sans)',
++            }}
++          >
++            {packs.map(p => (
++              <option key={p.name} value={p.name.toLowerCase().replace(/ /g, '_')}>
++                {p.name}
++              </option>
++            ))}
++          </select>
++        </div>
+       </div>
+ 
+-      <div className="flex-1 overflow-y-auto p-8 space-y-6">
+-        {messages.map((msg, idx) => (
+-          <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+-            <div className={`max-w-2xl rounded-2xl px-6 py-4 ${
+-              msg.role === 'user' 
+-                ? 'bg-[#1f6feb] text-white' 
+-                : 'bg-[#161b22] border border-[#30363d] text-[#c9d1d9]'
+-            }`}>
+-              <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
+-            </div>
+-          </div>
+-        ))}
+-        {loading && (
+-          <div className="flex justify-start">
+-            <div className="bg-[#161b22] border border-[#30363d] text-[#8b949e] rounded-2xl px-6 py-4 flex items-center gap-2">
+-               <div className="w-2 h-2 rounded-full bg-[#58a6ff] animate-bounce"></div>
+-               <div className="w-2 h-2 rounded-full bg-[#58a6ff] animate-bounce" style={{animationDelay: '0.2s'}}></div>
+-               <div className="w-2 h-2 rounded-full bg-[#58a6ff] animate-bounce" style={{animationDelay: '0.4s'}}></div>
+-            </div>
++      {/* Messages */}
++      <div style={{
++        flex: 1,
++        overflowY: 'auto',
++        padding: '24px 28px',
++      }}>
++        {messages.length === 0 && (
++          <div style={{
++            display: 'flex',
++            alignItems: 'center',
++            justifyContent: 'center',
++            height: '100%',
++            flexDirection: 'column',
++            gap: '12px',
++          }}>
++            <div style={{
++              width: '64px',
++              height: '64px',
++              borderRadius: 'var(--radius-lg)',
++              background: 'var(--accent-gradient)',
++              display: 'flex',
++              alignItems: 'center',
++              justifyContent: 'center',
++              fontSize: '28px',
++              boxShadow: 'var(--accent-glow)',
++              marginBottom: '8px',
++            }}>ΓÜí</div>
++            <h3 style={{ color: 'var(--text-primary)', fontSize: '18px', fontWeight: '600' }}>
++              {currentPack ? currentPack.name : 'Select a Pack'}
++            </h3>
++            <p style={{ color: 'var(--text-muted)', fontSize: '14px', maxWidth: '400px', textAlign: 'center' }}>
++              {currentPack
++                ? `${currentPack.description}. Start chatting to interact with this clerk.`
++                : 'Choose a capability pack to begin.'}
++            </p>
++            {currentPack?.tools?.length > 0 && (
++              <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
++                {currentPack.tools.map(t => (
++                  <span key={t} className="badge badge-info">{t}</span>
++                ))}
++              </div>
++            )}
+           </div>
+         )}
++
++        <div style={{ maxWidth: '800px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
++          {messages.map((msg, idx) => (
++            <div
++              key={idx}
++              style={{
++                display: 'flex',
++                justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
++                animation: msg.role === 'user' ? 'fadeInRight 0.3s ease' : 'fadeInLeft 0.4s ease',
++              }}
++            >
++              <div style={{ maxWidth: '85%' }}>
++                <div style={{
++                  borderRadius: msg.role === 'user'
++                    ? 'var(--radius-lg) var(--radius-lg) 4px var(--radius-lg)'
++                    : 'var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px',
++                  padding: '14px 18px',
++                  ...(msg.role === 'user'
++                    ? {
++                        background: 'linear-gradient(135deg, var(--accent-indigo), var(--accent-purple))',
++                        color: 'white',
++                      }
++                    : {
++                        background: 'var(--bg-surface)',
++                        border: '1px solid var(--border-subtle)',
++                        color: 'var(--text-primary)',
++                      }),
++                }}>
++                  {msg.role === 'user' ? (
++                    <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.5' }}>{msg.content}</p>
++                  ) : (
++                    <div className="markdown-body" style={{ fontSize: '14px' }}>
++                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
++                        {msg.content}
++                      </ReactMarkdown>
++                    </div>
++                  )}
++                </div>
++
++                {/* Metadata badges */}
++                {msg.metadata && msg.metadata.confidence !== undefined && (
++                  <div style={{
++                    display: 'flex',
++                    alignItems: 'center',
++                    gap: '8px',
++                    marginTop: '8px',
++                    paddingLeft: '4px',
++                    flexWrap: 'wrap',
++                  }}>
++                    <span className="badge badge-success" title="Confidence score">
++                      {(msg.metadata.confidence * 100).toFixed(0)}% conf
++                    </span>
++                    <span className="badge badge-info" title="Tokens used">
++                      {msg.metadata.total_tokens} tokens
++                    </span>
++                    {msg.metadata.escalated && (
++                      <span className="badge badge-warning" title="Escalated to larger model">
++                        Escalated
++                      </span>
++                    )}
++                    {msg.metadata.tool_used && (
++                      <span className="badge badge-accent" title="Tool invoked">
++                        {msg.metadata.tool_used}
++                      </span>
++                    )}
++                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
++                      {msg.metadata.rules_applied} rules
++                    </span>
++                  </div>
++                )}
++              </div>
++            </div>
++          ))}
++
++          {loading && (
++            <div style={{ display: 'flex', justifyContent: 'flex-start', animation: 'fadeIn 0.3s ease' }}>
++              <div style={{
++                background: 'var(--bg-surface)',
++                border: '1px solid var(--border-subtle)',
++                borderRadius: 'var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px',
++                padding: '16px 22px',
++                display: 'flex',
++                alignItems: 'center',
++                gap: '6px',
++              }}>
++                {[0, 1, 2].map(i => (
++                  <div key={i} style={{
++                    width: '8px',
++                    height: '8px',
++                    borderRadius: '50%',
++                    background: 'var(--accent-indigo)',
++                    animation: `bounce-dot 1.2s ${i * 0.2}s infinite ease-in-out`,
++                  }} />
++                ))}
++              </div>
++            </div>
++          )}
++          <div ref={messagesEndRef} />
++        </div>
+       </div>
+ 
+-      <div className="p-6 bg-[#161b22] border-t border-[#30363d]">
+-        <form onSubmit={handleSend} className="max-w-4xl mx-auto flex gap-4">
++      {/* Input */}
++      <div style={{
++        padding: '16px 28px 20px',
++        borderTop: '1px solid var(--border-subtle)',
++        background: 'var(--bg-primary)',
++      }}>
++        <form onSubmit={handleSend} style={{
++          maxWidth: '800px',
++          margin: '0 auto',
++          display: 'flex',
++          gap: '12px',
++        }}>
+           <input
++            ref={inputRef}
+             type="text"
+             value={input}
+             onChange={(e) => setInput(e.target.value)}
+-            placeholder="Speak with the clerk..."
+-            className="flex-1 bg-[#0d1117] border border-[#30363d] rounded-xl px-6 py-4 text-white focus:outline-none focus:border-[#58a6ff] focus:ring-1 focus:ring-[#58a6ff]"
++            placeholder={currentPack ? `Ask ${currentPack.name}...` : 'Select a pack to begin...'}
++            disabled={loading || packs.length === 0}
++            style={{
++              flex: 1,
++              background: 'var(--bg-surface)',
++              border: '1px solid var(--border-default)',
++              borderRadius: 'var(--radius-lg)',
++              padding: '14px 20px',
++              color: 'var(--text-primary)',
++              fontSize: '14px',
++              outline: 'none',
++              transition: 'border-color var(--transition-fast)',
++              fontFamily: 'var(--font-sans)',
++            }}
++            onFocus={e => e.target.style.borderColor = 'var(--accent-indigo)'}
++            onBlur={e => e.target.style.borderColor = 'var(--border-default)'}
+           />
+-          <button 
++          <button
+             type="submit"
+-            disabled={loading}
+-            className="bg-[#238636] hover:bg-[#2ea043] text-white px-8 py-4 rounded-xl font-medium transition-colors disabled:opacity-50"
++            disabled={loading || !input.trim()}
++            className="btn-primary"
++            style={{
++              padding: '14px 28px',
++              borderRadius: 'var(--radius-lg)',
++              fontSize: '14px',
++            }}
+           >
+-            Send
++            {loading ? 'Thinking...' : 'Send'}
+           </button>
+         </form>
+       </div>
+diff --git a/frontend/src/views/Inspector.jsx b/frontend/src/views/Inspector.jsx
+index da28df4..ea01110 100644
+--- a/frontend/src/views/Inspector.jsx
++++ b/frontend/src/views/Inspector.jsx
+@@ -1,56 +1,232 @@
+ import React, { useState, useEffect } from 'react';
+ 
++const EVENT_COLORS = {
++  boot: { bg: 'rgba(99, 102, 241, 0.1)', color: '#818cf8', label: 'BOOT' },
++  session_start: { bg: 'rgba(59, 130, 246, 0.1)', color: '#60a5fa', label: 'SESSION' },
++  request_received: { bg: 'rgba(99, 102, 241, 0.08)', color: '#a5b4fc', label: 'REQUEST' },
++  local_draft: { bg: 'rgba(16, 185, 129, 0.1)', color: '#34d399', label: 'DRAFT' },
++  escalation: { bg: 'rgba(245, 158, 11, 0.1)', color: '#fbbf24', label: 'ESCALATED' },
++  tool_invoked: { bg: 'rgba(139, 92, 246, 0.1)', color: '#a78bfa', label: 'TOOL' },
++  verdict: { bg: 'rgba(16, 185, 129, 0.12)', color: '#10b981', label: 'VERDICT' },
++};
++
+ export default function Inspector() {
+   const [events, setEvents] = useState([]);
++  const [filter, setFilter] = useState('all');
++  const [autoRefresh, setAutoRefresh] = useState(true);
+ 
+   const fetchLedger = () => {
+     fetch('/api/ledger')
+       .then(res => res.json())
+       .then(data => {
+-        if (data.events) setEvents(data.events.reverse());
+-      });
++        if (data.events) setEvents([...data.events].reverse());
++      })
++      .catch(() => {});
+   };
+ 
+   useEffect(() => {
+     fetchLedger();
+-    const interval = setInterval(fetchLedger, 5000);
+-    return () => clearInterval(interval);
+-  }, []);
++    if (autoRefresh) {
++      const interval = setInterval(fetchLedger, 3000);
++      return () => clearInterval(interval);
++    }
++  }, [autoRefresh]);
++
++  const filteredEvents = filter === 'all'
++    ? events
++    : events.filter(e => e.event_type === filter);
++
++  // Summary stats
++  const totalTokens = events
++    .filter(e => e.event_type === 'verdict')
++    .reduce((sum, e) => sum + (e.payload?.total_tokens || 0), 0);
++  const escalationCount = events.filter(e => e.event_type === 'escalation').length;
++  const sessionCount = events.filter(e => e.event_type === 'session_start').length;
++  const toolCount = events.filter(e => e.event_type === 'tool_invoked').length;
++
++  const handleClear = async () => {
++    await fetch('/api/ledger/clear', { method: 'POST' });
++    setEvents([]);
++  };
++
++  const eventTypes = ['all', ...Object.keys(EVENT_COLORS)];
+ 
+   return (
+-    <div className="flex-1 flex flex-col h-screen bg-[#0d1117]">
+-      <div className="h-16 border-b border-[#30363d] flex items-center justify-between px-8 bg-[#161b22]">
+-        <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+-          <span className="text-[#d2a8ff]">≡ƒôû</span> House Ledger
+-        </h2>
+-        <button onClick={fetchLedger} className="text-[#58a6ff] hover:text-[#79c0ff] text-sm font-medium">
+-          Refresh Stream
+-        </button>
++    <div style={{
++      flex: 1,
++      display: 'flex',
++      flexDirection: 'column',
++      height: '100vh',
++      background: 'var(--bg-base)',
++    }}>
++      {/* Header */}
++      <div style={{
++        padding: '0 28px',
++        height: '60px',
++        minHeight: '60px',
++        borderBottom: '1px solid var(--border-subtle)',
++        display: 'flex',
++        alignItems: 'center',
++        justifyContent: 'space-between',
++        background: 'var(--bg-primary)',
++      }}>
++        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
++          <h2 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)' }}>
++            House Ledger
++          </h2>
++          {autoRefresh && (
++            <div style={{
++              width: '7px', height: '7px', borderRadius: '50%',
++              background: 'var(--success)',
++              animation: 'pulse-glow 2s infinite',
++            }} />
++          )}
++        </div>
++        <div style={{ display: 'flex', gap: '8px' }}>
++          <button className="btn-ghost" onClick={() => setAutoRefresh(!autoRefresh)}>
++            {autoRefresh ? 'Pause' : 'Resume'}
++          </button>
++          <button className="btn-ghost" onClick={fetchLedger}>Refresh</button>
++          <button className="btn-danger" onClick={handleClear} style={{ fontSize: '12px', padding: '6px 12px' }}>
++            Clear
++          </button>
++        </div>
+       </div>
+ 
+-      <div className="flex-1 p-8 overflow-y-auto">
+-        <div className="max-w-5xl mx-auto space-y-4">
+-          {events.map((evt, idx) => (
+-            <div key={idx} className="bg-[#161b22] border border-[#30363d] rounded-xl overflow-hidden">
+-              <div className="px-6 py-3 border-b border-[#30363d] flex items-center justify-between bg-[#0d1117]">
+-                <div className="flex items-center gap-3">
+-                  <span className={`px-2 py-1 rounded text-xs font-bold ${
+-                    evt.event_type === 'escalation' ? 'bg-[#da3633]/20 text-[#ff7b72]' :
+-                    evt.event_type === 'local_draft' ? 'bg-[#238636]/20 text-[#3fb950]' :
+-                    'bg-[#1f6feb]/20 text-[#58a6ff]'
+-                  }`}>
+-                    {evt.event_type.toUpperCase()}
++      {/* Summary Cards */}
++      <div style={{
++        padding: '20px 28px',
++        display: 'grid',
++        gridTemplateColumns: 'repeat(4, 1fr)',
++        gap: '14px',
++        borderBottom: '1px solid var(--border-subtle)',
++      }}>
++        {[
++          { label: 'Sessions', value: sessionCount, color: 'var(--info)' },
++          { label: 'Total Tokens', value: totalTokens.toLocaleString(), color: 'var(--success)' },
++          { label: 'Escalations', value: escalationCount, color: 'var(--warning)' },
++          { label: 'Tool Calls', value: toolCount, color: 'var(--accent-purple)' },
++        ].map((stat, i) => (
++          <div key={i} style={{
++            background: 'var(--bg-surface)',
++            border: '1px solid var(--border-subtle)',
++            borderRadius: 'var(--radius-md)',
++            padding: '14px 18px',
++            animation: `fadeIn 0.3s ${i * 0.05}s ease both`,
++          }}>
++            <p style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>
++              {stat.label}
++            </p>
++            <p style={{ fontSize: '22px', fontWeight: '700', color: stat.color }}>
++              {stat.value}
++            </p>
++          </div>
++        ))}
++      </div>
++
++      {/* Filters */}
++      <div style={{
++        padding: '12px 28px',
++        display: 'flex',
++        gap: '6px',
++        flexWrap: 'wrap',
++        borderBottom: '1px solid var(--border-subtle)',
++      }}>
++        {eventTypes.map(type => (
++          <button
++            key={type}
++            onClick={() => setFilter(type)}
++            style={{
++              padding: '5px 12px',
++              borderRadius: 'var(--radius-full)',
++              border: filter === type ? '1px solid var(--accent-indigo)' : '1px solid var(--border-default)',
++              background: filter === type ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
++              color: filter === type ? 'var(--accent-indigo)' : 'var(--text-secondary)',
++              fontSize: '12px',
++              fontWeight: '500',
++              cursor: 'pointer',
++              transition: 'all var(--transition-fast)',
++              fontFamily: 'var(--font-sans)',
++              textTransform: 'capitalize',
++            }}
++          >
++            {type === 'all' ? `All (${events.length})` : type.replace(/_/g, ' ')}
++          </button>
++        ))}
++      </div>
++
++      {/* Timeline */}
++      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 28px' }}>
++        <div style={{ maxWidth: '900px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
++          {filteredEvents.length === 0 && (
++            <div style={{
++              textAlign: 'center',
++              padding: '40px',
++              color: 'var(--text-muted)',
++              fontSize: '14px',
++            }}>
++              No events recorded yet. Start chatting in the Console to generate ledger entries.
++            </div>
++          )}
++          {filteredEvents.map((evt, idx) => {
++            const config = EVENT_COLORS[evt.event_type] || { bg: 'var(--bg-surface)', color: 'var(--text-secondary)', label: evt.event_type.toUpperCase() };
++            return (
++              <div
++                key={idx}
++                style={{
++                  background: 'var(--bg-surface)',
++                  border: '1px solid var(--border-subtle)',
++                  borderRadius: 'var(--radius-md)',
++                  overflow: 'hidden',
++                  animation: `fadeIn 0.2s ${Math.min(idx * 0.03, 0.3)}s ease both`,
++                }}
++              >
++                <div style={{
++                  display: 'flex',
++                  alignItems: 'center',
++                  justifyContent: 'space-between',
++                  padding: '10px 16px',
++                  borderBottom: '1px solid var(--border-subtle)',
++                  background: 'var(--bg-primary)',
++                }}>
++                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
++                    <span style={{
++                      background: config.bg,
++                      color: config.color,
++                      padding: '3px 10px',
++                      borderRadius: 'var(--radius-full)',
++                      fontSize: '10px',
++                      fontWeight: '700',
++                      letterSpacing: '0.04em',
++                      border: `1px solid ${config.color}30`,
++                    }}>
++                      {config.label}
++                    </span>
++                    {evt.payload?.session_id && (
++                      <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
++                        {evt.payload.session_id.slice(0, 8)}
++                      </span>
++                    )}
++                  </div>
++                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
++                    {new Date(evt.timestamp).toLocaleTimeString()}
+                   </span>
+-                  <span className="text-[#8b949e] text-sm">{new Date(evt.timestamp).toLocaleTimeString()}</span>
++                </div>
++                <div style={{ padding: '10px 16px' }}>
++                  <pre style={{
++                    color: 'var(--text-secondary)',
++                    fontSize: '12px',
++                    fontFamily: 'var(--font-mono)',
++                    whiteSpace: 'pre-wrap',
++                    wordBreak: 'break-word',
++                    margin: 0,
++                  }}>
++                    {JSON.stringify(evt.payload, null, 2)}
++                  </pre>
+                 </div>
+               </div>
+-              <div className="px-6 py-4">
+-                <pre className="text-[#c9d1d9] text-sm overflow-x-auto font-mono">
+-                  {JSON.stringify(evt.payload, null, 2)}
+-                </pre>
+-              </div>
+-            </div>
+-          ))}
++            );
++          })}
+         </div>
+       </div>
+     </div>
+diff --git a/frontend/vite.config.js b/frontend/vite.config.js
+index 8b0f57b..12f020c 100644
+--- a/frontend/vite.config.js
++++ b/frontend/vite.config.js
+@@ -4,4 +4,12 @@ import react from '@vitejs/plugin-react'
+ // https://vite.dev/config/
+ export default defineConfig({
+   plugins: [react()],
++  server: {
++    proxy: {
++      '/api': {
++        target: 'http://localhost:8000',
++        changeOrigin: true,
++      },
++    },
++  },
+ })

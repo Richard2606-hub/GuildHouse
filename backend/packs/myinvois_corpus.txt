@@ -1,0 +1,26 @@
+# MyInvois Field Specification & Rules
+Version: 1.0
+Source: LHDN e-Invoicing Guidelines 2026
+
+## Required Fields for B2B e-Invoices
+Every valid e-Invoice must contain the following fields exactly:
+1. `invoice_number`: Unique alphanumeric identifier (Max 50 chars).
+2. `issue_date`: Date in YYYY-MM-DD format.
+3. `supplier_name`: Registered name of the issuing company.
+4. `supplier_tin`: Tax Identification Number (10 digits).
+5. `supplier_sst`: SST registration number (if applicable) or "NA".
+6. `buyer_name`: Registered name of the purchasing company.
+7. `buyer_tin`: Tax Identification Number of buyer (10 digits).
+8. `items`: Array of line items. Each item MUST have `description`, `quantity` (numeric), `unit_price` (numeric), `tax_rate` (percentage), `total_amount` (numeric).
+9. `subtotal`: Sum of all item `total_amount` before tax.
+10. `total_tax`: Sum of all tax amounts.
+11. `grand_total`: `subtotal` + `total_tax`.
+
+## Validation Rules (Deterministic Checks)
+- RULE-001 (Math Check): The `grand_total` MUST exactly equal the `subtotal` + `total_tax`. Tolerance is 0.00.
+- RULE-002 (TIN Format): TINs must be exactly 10 digits. No letters or symbols allowed.
+- RULE-003 (Date Format): Dates must strictly adhere to ISO 8601 (YYYY-MM-DD).
+
+## Refusal Guidelines
+- Do not guess missing required fields. If `buyer_tin` is missing from the receipt, explicitly ask the user for it.
+- Never fabricate invoice numbers or dates.

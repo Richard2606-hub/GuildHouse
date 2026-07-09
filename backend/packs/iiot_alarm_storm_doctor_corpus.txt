@@ -1,0 +1,2 @@
+Alarm Correlation Handbook:
+If Pump A fails, Flow Sensor B will trigger 'Low Flow' 2 seconds later. Root cause is Pump A.

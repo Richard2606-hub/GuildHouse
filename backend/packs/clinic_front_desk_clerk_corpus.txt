@@ -1,0 +1,3 @@
+Clinic Triage Protocol:
+Red flag symptoms (chest pain, severe bleeding) require immediate emergency room direction.
+Standard consultations are 15 minutes.

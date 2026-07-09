@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 export default function Console() {
   const [messages, setMessages] = useState([]);
@@ -106,7 +108,7 @@ Status: Compliant. Ready for LHDN gateway ingestion.`,
       .then(data => {
         setPacks(data.packs);
         if (data.packs.length > 0) {
-          const defaultPack = data.packs[0].name.toLowerCase().replace(' ', '_');
+          const defaultPack = data.packs[0].name.toLowerCase().replaceAll(' ', '_');
           setSelectedPack(defaultPack);
         }
       });
@@ -156,6 +158,7 @@ Status: Compliant. Ready for LHDN gateway ingestion.`,
     setIsDemoPlaying(!isDemoPlaying);
   };
 
+
   const handleSend = async (textToSend, extraPayload = {}) => {
     const text = textToSend || input;
     if (!text.trim() || !selectedPack) return;
@@ -170,29 +173,6 @@ Status: Compliant. Ready for LHDN gateway ingestion.`,
     setMessages(prev => [...prev, userMsg]);
     if (!textToSend) setInput('');
     setLoading(true);
-    window.dispatchEvent(new Event('gpuSpike'));
-
-    const isSovereign = localStorage.getItem('sovereign_mode') === 'true';
-    const requiresEscalation = text.toLowerCase().includes('help') || text.toLowerCase().includes('hack') || text.toLowerCase().includes('escalate');
-
-    if (isSovereign && requiresEscalation) {
-      // Simulate local-only secure override
-      setTimeout(() => {
-        let trace = generateMockTrace(selectedPack, text);
-        setMessages(prev => [...prev, { 
-          role: 'clerk', 
-          content: `[Strict Sovereign Block] Direct cloud escalation blocked by engine policy. Under PDPA regulations, your question was quarantined within your private hardware boundaries. 
-
-Refusal: "I cannot utilize external models to process this request. The query contains protected categories or keywords. Enforcing localized fallback answer."`,
-          timestamp: new Date().toISOString(),
-          trace: trace,
-          pack: selectedPack
-        }]);
-        setLoading(false);
-        window.dispatchEvent(new Event('gpuIdle'));
-      }, 1200);
-      return;
-    }
 
     try {
       const res = await fetch('/api/chat', {
@@ -206,14 +186,11 @@ Refusal: "I cannot utilize external models to process this request. The query co
       });
       const data = await res.json();
       
-      // Get the last event from the ledger to generate a realistic trace
-      let trace = generateMockTrace(selectedPack, text);
-
       setMessages(prev => [...prev, { 
         role: 'clerk', 
         content: data.response,
         timestamp: new Date().toISOString(),
-        trace: trace,
+        trace: data.metadata ? buildTraceFromMetadata(data.metadata) : null,
         pack: selectedPack
       }]);
     } catch (err) {
@@ -225,43 +202,34 @@ Refusal: "I cannot utilize external models to process this request. The query co
       }]);
     }
     setLoading(false);
-    window.dispatchEvent(new Event('gpuIdle'));
+    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
   };
 
-  // Generate trace mapping the engine steps
-  const generateMockTrace = (pack, text) => {
-    const isSovereign = localStorage.getItem('sovereign_mode') === 'true';
-    const requiresEscalation = text.toLowerCase().includes('help') || text.toLowerCase().includes('hack') || text.toLowerCase().includes('escalate');
-    const isEscalated = requiresEscalation && !isSovereign;
-    
-    const steps = [
-      { name: 'Request Intake', status: 'success', detail: 'Received text & verified permissions.' },
-      { name: 'Tool Extraction', status: 'success', detail: pack === 'scamshield' ? 'OCR text extraction completed locally.' : pack === 'myinvois_clerk' ? 'Vision field boundary coordinates mapped.' : 'Media keyframe & audio transcription executed.' },
-      { name: 'Local Draft (Gemma)', status: 'success', detail: `Draft generated locally. Confidence: ${requiresEscalation ? '52%' : '88%'}` },
-    ];
-
-    if (requiresEscalation) {
-      if (isSovereign) {
-        steps.push({ name: 'Confidence Gating', status: 'sovereign_blocked', detail: 'Confidence (52%) below 80% threshold. Escalation blocked by Sovereign Switch.' });
-        steps.push({ name: 'Local Fallback Handler', status: 'success', detail: 'Refused execution in character locally. 0 bytes transmitted outside container.' });
-      } else {
-        steps.push({ name: 'Confidence Gating', status: 'escalated', detail: 'Confidence (52%) below 80% threshold. Gated and escalated.' });
-        steps.push({ name: 'Fireworks Escalation', status: 'success', detail: 'Routed to Llama 3.1 70B remote endpoint. Cost: $0.0012' });
-      }
-    } else {
-      steps.push({ name: 'Confidence Gating', status: 'success', detail: 'Confidence (88%) above threshold. Gating passed.' });
+  const buildTraceFromMetadata = (metadata) => {
+    const steps = [];
+    if (metadata.tool_used) {
+        steps.push({ name: 'Tool Extraction', status: 'success', detail: `Used tool: ${metadata.tool_used}` });
     }
-
-    steps.push(
-      { name: 'Rules Validation', status: 'success', detail: 'Enforced 3 constraints. Checks verified.' },
-      { name: 'Persona Rendering', status: 'success', detail: `Applied voice guidelines for ${pack.replace('_', ' ')}.` }
-    );
+    
+    const confidence = metadata.confidence || 0;
+    const isEscalated = metadata.escalated;
+    
+    if (isEscalated) {
+      steps.push({ name: 'Confidence Gating', status: 'escalated', detail: `Confidence (${(confidence*100).toFixed(0)}%) below threshold.` });
+      steps.push({ name: 'Cloud Escalation', status: 'success', detail: `Routed to remote endpoint.` });
+    } else {
+      steps.push({ name: 'Local Draft', status: 'success', detail: `Confidence (${(confidence*100).toFixed(0)}%) above threshold.` });
+    }
+    
+    if (metadata.rules_enforced) {
+        steps.push({ name: 'Rules Validation', status: 'success', detail: `Enforced ${metadata.rules_enforced} constraints.` });
+    }
 
     return {
       id: Math.random().toString(36).substr(2, 9),
       escalated: isEscalated,
-      confidence: requiresEscalation ? 0.52 : 0.88,
-      latencyMs: isEscalated ? 2100 : isSovereign && requiresEscalation ? 400 : 920,
+      confidence: confidence,
+      latencyMs: metadata.latency_ms || (metadata.local_tokens ? (metadata.local_tokens * 10) : 500),
       steps
     };
   };
@@ -296,16 +264,16 @@ Refusal: "I cannot utilize external models to process this request. The query co
 
     // Parse clerk answers
     const content = msg.content;
-    const isScamShield = msg.pack === 'scamshield' || (isDemoMode && content.includes('ScamShield'));
-    const isMyInvois = msg.pack === 'myinvois_clerk' || (isDemoMode && content.includes('Invois'));
-    const isLectureForge = msg.pack === 'lectureforge' && !isDemoMode;
+    const isScamShield = msg.pack === 'scamshield';
+    const isMyInvois = msg.pack === 'myinvois_clerk';
+    const isLectureForge = msg.pack === 'lectureforge';
 
     // UI Widgets based on clerk domain
     return (
       <div className="space-y-4 w-full">
         {/* Default bubble message */}
-        <div className="bg-[#161b22] border border-[#30363d] rounded-2xl px-6 py-4 text-[#e6edf3] shadow-lg shadow-black/10">
-          <p className="text-sm leading-relaxed whitespace-pre-wrap">{content}</p>
+        <div className="bg-[#161b22] border border-[#30363d] rounded-2xl px-6 py-4 text-[#e6edf3] shadow-lg shadow-black/10 prose prose-invert max-w-none text-sm">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
         </div>
 
         {/* Dynamic ScamShield Threat assessment widget */}
@@ -405,7 +373,7 @@ Refusal: "I cannot utilize external models to process this request. The query co
             </div>
 
             {/* Interactive form to fix the defect in-character */}
-            {!content.includes('MY123456789') && !isDemoMode && (
+            {!content.includes('MY123456789') && (
               <div className="mt-4 bg-[#0d1117] rounded-xl p-4 border border-[#30363d]">
                 <p className="text-xs text-[#8b949e] mb-2 font-medium">Add Missing Information:</p>
                 <div className="flex gap-2">
@@ -530,18 +498,7 @@ Refusal: "I cannot utilize external models to process this request. The query co
         </div>
         
         <div className="flex gap-4 items-center">
-          <button
-            onClick={() => {
-              setMessages([]);
-              setIsDemoMode(!isDemoMode);
-              setDemoStep(0);
-            }}
-            className={`text-xs font-bold px-3 py-2 rounded-xl transition-all border ${
-              isDemoMode ? 'bg-[#1f6feb] border-[#58a6ff] text-white shadow-lg shadow-[#1f6feb]/15' : 'bg-[#21262d] border-[#30363d] text-white hover:border-[#8b949e]'
-            }`}
-          >
-            {isDemoMode ? '🤖 Exit Demo Player' : '✨ Replay Demo Session'}
-          </button>
+
           
           <select 
             value={selectedPack} 
@@ -552,47 +509,13 @@ Refusal: "I cannot utilize external models to process this request. The query co
             className="bg-[#0d1117] border border-[#30363d] text-white text-sm rounded-xl px-4 py-2 focus:ring-[#58a6ff] focus:border-[#58a6ff] transition-all cursor-pointer font-medium"
           >
             {packs.map(p => (
-              <option key={p.name} value={p.name.toLowerCase().replace(' ', '_')}>{p.name}</option>
+              <option key={p.name} value={p.name.toLowerCase().replaceAll(' ', '_')}>{p.name}</option>
             ))}
           </select>
         </div>
       </div>
 
-      {/* Demo Replay Control Player */}
-      {isDemoMode && (
-        <div className="bg-[#161b22] border-b border-[#30363d] px-8 py-3 flex items-center justify-between text-xs font-bold text-white shrink-0 animate-slideUp">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#1f6feb] animate-pulse"></span>
-            <span className="uppercase tracking-wider font-semibold text-[#8b949e]">Ledger Playback Console</span>
-          </div>
-          
-          <div className="flex gap-3 items-center">
-            <button
-              onClick={handleRestartDemo}
-              className="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] px-3 py-1.5 rounded-lg transition-all"
-            >
-              ⏮ Restart
-            </button>
-            <button
-              onClick={handlePlayPauseDemo}
-              className="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5"
-            >
-              {isDemoPlaying ? '⏸ Pause' : '▶ Play'}
-            </button>
-            <button
-              onClick={handleNextDemoStep}
-              disabled={demoStep >= demoScript.length}
-              className="bg-[#238636] hover:bg-[#2ea043] text-white px-3 py-1.5 rounded-lg transition-all disabled:opacity-40"
-            >
-              ⏭ Next Step
-            </button>
-          </div>
-          
-          <div className="text-[#8b949e]">
-            Turn {Math.ceil((demoStep) / 2)} of {demoScript.length / 2}
-          </div>
-        </div>
-      )}
+
 
       {/* Chat Messages Log */}
       <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-[#090d13]">
@@ -639,7 +562,7 @@ Refusal: "I cannot utilize external models to process this request. The query co
       <div className="p-6 bg-[#161b22] border-t border-[#30363d] shrink-0">
         <div className="max-w-4xl mx-auto space-y-4">
           {/* Simulated File Upload Shortcuts */}
-          {mockFiles[selectedPack] && !isDemoMode && (
+          {mockFiles[selectedPack] && (
             <div className="flex gap-2 flex-wrap items-center">
               <span className="text-[10px] text-[#8b949e] uppercase font-bold tracking-wider mr-2">Simulate File:</span>
               {mockFiles[selectedPack].map((file) => (
@@ -659,14 +582,14 @@ Refusal: "I cannot utilize external models to process this request. The query co
             <input
               type="text"
               value={input}
-              disabled={isDemoMode}
+              
               onChange={(e) => setInput(e.target.value)}
-              placeholder={isDemoMode ? "Currently in Demo Replay Mode (inputs locked)..." : "Speak with the clerk or query system state..."}
+              placeholder="Speak with the clerk or query system state..."
               className="flex-1 bg-[#0d1117] border border-[#30363d] rounded-xl px-6 py-4 text-white placeholder-[#8b949e] focus:outline-none focus:border-[#58a6ff] focus:ring-1 focus:ring-[#58a6ff] transition-all text-sm disabled:opacity-50"
             />
             <button 
               type="submit"
-              disabled={loading || !input.trim() || isDemoMode}
+              disabled={loading || !input.trim()}
               className="bg-[#238636] hover:bg-[#2ea043] text-white px-8 py-4 rounded-xl font-bold transition-colors disabled:opacity-50 text-sm shrink-0"
             >
               Send Message

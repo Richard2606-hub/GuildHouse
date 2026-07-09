@@ -1,1 +1,1 @@
-"""GuildHouse Runtime Engine Core"""
+"""GuildHouse Engine — Pack-driven AI agent runtime."""

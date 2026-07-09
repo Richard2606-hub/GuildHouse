@@ -1,0 +1,2 @@
+DeFi Transaction Primer:
+A 'Swap' typically involves exchanging one ERC-20 token for another via a liquidity pool like Uniswap.

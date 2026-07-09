@@ -1,0 +1,5 @@
+Scoring Rubric:
+1. Innovation (25%)
+2. Technical Execution (25%)
+3. Business Potential (25%)
+4. Completeness (25%)

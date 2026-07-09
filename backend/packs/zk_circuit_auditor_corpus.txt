@@ -1,0 +1,4 @@
+Common ZK Circuit Vulnerabilities:
+1. Missing range checks
+2. Unconstrained inputs
+3. Arithmetic overflows

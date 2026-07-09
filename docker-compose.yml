@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always
+    networks:
+      - guildhouse_net
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/packs:/app/packs
+      - ./backend/data:/app/data
+    environment:
+      - FIREWORKS_API_KEY=${FIREWORKS_API_KEY:-}
+      - VLLM_API_URL=http://vllm-rocm:8080/v1
+    depends_on:
+      - vllm-rocm
+    restart: always
+    networks:
+      - guildhouse_net
+
+  vllm-rocm:
+    image: rocm/vllm:latest
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    ports:
+      - "8080:8080"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    command: ["--model", "google/gemma-2-9b-it", "--host", "0.0.0.0", "--port", "8080"]
+    shm_size: '16gb'
+    restart: unless-stopped
+    networks:
+      - guildhouse_net
+
+networks:
+  guildhouse_net:
+    driver: bridge

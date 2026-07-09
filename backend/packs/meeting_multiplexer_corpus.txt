@@ -1,0 +1,2 @@
+Meeting Summary Protocol:
+Always include: Date, Attendees, Key Decisions, Action Items with Owners.

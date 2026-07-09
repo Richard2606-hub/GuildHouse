@@ -1,0 +1,3 @@
+PDPA Principles:
+1. General Principle: Cannot process personal data without consent.
+2. Notice and Choice: Must inform data subjects of purpose.

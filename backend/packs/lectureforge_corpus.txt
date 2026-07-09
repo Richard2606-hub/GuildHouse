@@ -1,0 +1,21 @@
+# LectureForge Pedagogy Guidelines
+Version: 1.2
+Source: GuildHouse Internal Education Standards
+
+## Flashcard Generation Standards
+- Goal: Active recall testing.
+- Format: Front should be a single, unambiguous question or prompt. Back should be a concise, definitive answer.
+- Fact-Locking: Every flashcard MUST be directly sourced from the provided lecture transcript or slides. Do not introduce external facts even if they are factually correct.
+- Anti-Pattern: Avoid "What is [X] and why is it important?" (Too complex for one card). Split into two cards.
+
+## Summary Generation Standards
+- Goal: Quick review and mental mapping.
+- Format: Bulleted list with hierarchical indentation. 
+- Maximum length: 500 words per 30 minutes of lecture.
+- Tone: Academic, objective, concise. No conversational filler like "In this lecture, the professor talked about..."
+
+## Practice Question Standards
+- Goal: Assessing comprehension and application.
+- Format: Multiple Choice Questions (MCQs) with 4 options (A, B, C, D).
+- Distractors: Incorrect options must be plausible but definitively wrong based *only* on the provided lecture material.
+- Explanation: The answer key must explain *why* the correct answer is right, citing the specific concept from the lecture.

@@ -1,0 +1,38 @@
+# ScamShield Typology Database
+Version: 2026.07
+Source: Regional Consumer Protection Advisories
+
+## TYP-001: Parcel Delivery Scam (Phishing)
+Target: Broad consumer base.
+Mechanics: 
+- Victim receives SMS or WhatsApp claiming a package could not be delivered due to "unpaid customs fee", "missing address info", or "wrong zip code".
+- Message contains a link that looks vaguely official but uses a strange top-level domain (e.g., .cc, .top, .vip) or URL shortener.
+- Link leads to a fake courier site (PosLaju, J&T, NinjaVan) demanding a small payment (RM 1.00 - RM 5.00) via credit card.
+- True goal is credit card detail harvesting.
+
+Red Flags:
+- Urgency ("act within 24 hours").
+- Generic greeting ("Dear Customer").
+- URL mismatch (link text doesn't match actual destination).
+
+## TYP-002: Fake Lottery / Prize Scam
+Target: Elderly, low-income groups.
+Mechanics:
+- Message claims victim won a large cash prize (e.g., RM10,000, RM50,000) or a new car/smartphone from a known brand (Shopee, Lazada, Shell).
+- Requires victim to contact a "manager" or click a link to claim the prize.
+- Perpetrators will ask for "processing fees", "taxes", or "insurance" to release the funds.
+
+Red Flags:
+- You cannot win a lottery you did not enter.
+- Legitimate sweepstakes do not ask winners to pay upfront fees.
+
+## TYP-003: Impersonation of Authorities (LHDN / Police / Bank Negara)
+Target: High-income individuals, professionals.
+Mechanics:
+- Caller/message claims victim's identity was used in money laundering, tax evasion, or drug trafficking.
+- Threatens immediate arrest or account freezing.
+- Demands funds be transferred to a "safe account" (usually an individual's personal account) for auditing.
+
+Red Flags:
+- Government agencies will never ask you to transfer money to a personal "safe account".
+- Use of fear and extreme urgency.

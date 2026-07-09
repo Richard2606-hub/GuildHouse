@@ -38,5 +38,25 @@ class Ledger:
     def log_escalation(self, session_id: str, rule: str, cost: float):
         self._append("escalation", {"session_id": session_id, "rule": rule, "estimated_cost": cost})
 
+    def log_tool_invoked(self, session_id: str, tool_name: str, status: str = "success"):
+        self._append("tool_invoked", {
+            "session_id": session_id,
+            "tool_name": tool_name,
+            "status": status
+        })
+
+    def log_verdict(self, session_id: str, pack_name: str, total_tokens: int, escalated: bool):
+        self._append("verdict", {
+            "session_id": session_id,
+            "pack_name": pack_name,
+            "total_tokens": total_tokens,
+            "escalated": escalated
+        })
+
+    def clear(self):
+        """Clear the ledger file."""
+        with open(self.filepath, "w", encoding="utf-8") as f:
+            f.write("")
+
 # Global instance for the runtime
 house_ledger = Ledger()

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-export default function Sidebar({ activeView, setActiveView, startTour }) {
+export default function Sidebar({ activeView, setActiveView, startTour, onExit }) {
 
   const [packCount, setPackCount] = useState(0);
   const [vram, setVram] = useState(8.8);
@@ -153,13 +153,21 @@ export default function Sidebar({ activeView, setActiveView, startTour }) {
       </nav>
 
       {/* Quick Demo Tour Button */}
-      <div className="px-4 pb-4">
+      <div className="px-4 pb-4 space-y-2">
         <button
           onClick={startTour}
           className="w-full py-2.5 bg-[#1f6feb]/15 hover:bg-[#1f6feb]/25 border border-[#1f6feb]/30 text-[#58a6ff] hover:text-white text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all"
         >
           ✨ Quick Demo Tour
         </button>
+        {onExit && (
+          <button
+            onClick={onExit}
+            className="w-full py-2.5 bg-[#da3633]/15 hover:bg-[#da3633]/25 border border-[#da3633]/30 text-[#ff7b72] hover:text-white text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all"
+          >
+            ✕ Exit Dashboard
+          </button>
+        )}
       </div>
 
 

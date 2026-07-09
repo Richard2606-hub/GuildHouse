@@ -4,8 +4,10 @@ import Console from './views/Console';
 import Inspector from './views/Inspector';
 import Catalog from './views/Catalog';
 import PackStudio from './views/PackStudio';
+import Landing from './views/Landing';
 
 export default function App() {
+  const [isDashboard, setIsDashboard] = useState(false);
   const [activeView, setActiveView] = useState('console');
   const [showTour, setShowTour] = useState(false);
   const [tourStep, setTourStep] = useState(1);
@@ -61,9 +63,13 @@ export default function App() {
     }
   };
 
+  if (!isDashboard) {
+    return <Landing onEnter={() => setIsDashboard(true)} />;
+  }
+
   return (
     <div className="flex h-screen bg-[#0d1117] text-[#c9d1d9] font-sans selection:bg-[#58a6ff]/30 relative overflow-hidden bg-grid-pattern">
-      <Sidebar activeView={activeView} setActiveView={setActiveView} startTour={startTour} />
+      <Sidebar activeView={activeView} setActiveView={setActiveView} startTour={startTour} onExit={() => setIsDashboard(false)} />
       
       {activeView === 'console' && <Console />}
       {activeView === 'inspector' && <Inspector />}
@@ -76,10 +82,19 @@ export default function App() {
           <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] pointer-events-auto" onClick={() => setShowTour(false)} />
           
           <div className={`absolute p-6 rounded-2xl bg-[#161b22] border-2 border-[#58a6ff]/40 text-[#c9d1d9] shadow-2xl max-w-sm w-full pointer-events-auto animate-slideUp ${tourSteps[tourStep].pos}`}>
-            <h4 className="text-sm font-bold text-white mb-2 flex items-center justify-between">
-              <span>{tourSteps[tourStep].title}</span>
-              <span className="text-[10px] bg-[#30363d] px-2 py-0.5 rounded font-mono text-[#8b949e]">Step {tourStep} of 5</span>
-            </h4>
+            <div className="flex justify-between items-start mb-2">
+              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <span>{tourSteps[tourStep].title}</span>
+                <span className="text-[10px] bg-[#30363d] px-2 py-0.5 rounded font-mono text-[#8b949e]">Step {tourStep} of 5</span>
+              </h4>
+              <button 
+                onClick={() => setShowTour(false)}
+                className="text-[#8b949e] hover:text-white transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            
             <p className="text-xs text-[#8b949e] leading-relaxed mb-4">{tourSteps[tourStep].text}</p>
             <div className="flex justify-between items-center">
               <button 

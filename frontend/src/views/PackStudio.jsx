@@ -35,7 +35,7 @@ export default function PackStudio() {
 
   const fetchRawPack = (packName) => {
     setEditorLoading(true);
-    const id = packName.toLowerCase().replace(' ', '_');
+    const id = packName.toLowerCase().replaceAll(' ', '_');
     fetch(`/api/packs/${id}`)
       .then(res => {
         if (!res.ok) throw new Error('File not found');
@@ -67,7 +67,7 @@ export default function PackStudio() {
     setEditorLoading(true);
     setStatus({ type: '', message: '' });
     window.dispatchEvent(new Event('gpuSpike'));
-    const id = selectedPack.name.toLowerCase().replace(' ', '_');
+    const id = selectedPack.name.toLowerCase().replaceAll(' ', '_');
 
     try {
       const res = await fetch(`/api/packs/${id}`, {
@@ -103,7 +103,7 @@ export default function PackStudio() {
   };
 
   // Generate line numbers helper
-  const lineNumbers = yamlContent.split('\n').map((_, index) => index + 1).join('\n');
+  const lineNumbers = (yamlContent || '').split('\n').map((_, index) => index + 1).join('\n');
 
   return (
     <div className="flex-1 flex h-screen bg-[#0d1117] text-[#c9d1d9] overflow-hidden animate-fadeIn">

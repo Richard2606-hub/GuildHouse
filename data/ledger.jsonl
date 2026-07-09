@@ -1,0 +1,12 @@
+{"timestamp": "2026-07-08T22:22:12.063158Z", "event_type": "session_start", "payload": {"session_id": "dd8e5b79-9ce6-466d-9109-0d18c318adf6", "pack_version": "1.0.0"}}
+{"timestamp": "2026-07-08T22:22:12.063792Z", "event_type": "request_received", "payload": {"session_id": "dd8e5b79-9ce6-466d-9109-0d18c318adf6", "message_length": 99}}
+{"timestamp": "2026-07-08T22:22:35.949525Z", "event_type": "local_draft", "payload": {"session_id": "dd8e5b79-9ce6-466d-9109-0d18c318adf6", "prompt_tokens": 1321, "completion_tokens": 0, "confidence": 1.0}}
+{"timestamp": "2026-07-08T22:22:35.950700Z", "event_type": "verdict", "payload": {"session_id": "dd8e5b79-9ce6-466d-9109-0d18c318adf6", "pack_name": "ScamShield", "total_tokens": 1321, "escalated": false}}
+{"timestamp": "2026-07-08T22:22:35.951329Z", "event_type": "session_start", "payload": {"session_id": "bb5ce31f-8de2-458a-8060-27e1159b6217", "pack_version": "1.0.0"}}
+{"timestamp": "2026-07-08T22:22:35.951682Z", "event_type": "request_received", "payload": {"session_id": "bb5ce31f-8de2-458a-8060-27e1159b6217", "message_length": 56}}
+{"timestamp": "2026-07-08T22:22:56.400913Z", "event_type": "local_draft", "payload": {"session_id": "bb5ce31f-8de2-458a-8060-27e1159b6217", "prompt_tokens": 1033, "completion_tokens": 0, "confidence": 1.0}}
+{"timestamp": "2026-07-08T22:22:56.403181Z", "event_type": "verdict", "payload": {"session_id": "bb5ce31f-8de2-458a-8060-27e1159b6217", "pack_name": "MyInvois Clerk", "total_tokens": 1033, "escalated": false}}
+{"timestamp": "2026-07-09T17:25:58.148410Z", "event_type": "boot", "payload": {"config_hash": "init"}}
+{"timestamp": "2026-07-09T17:35:42.863126Z", "event_type": "boot", "payload": {"config_hash": "init"}}
+{"timestamp": "2026-07-09T17:40:43.657511Z", "event_type": "boot", "payload": {"config_hash": "init"}}
+{"timestamp": "2026-07-09T17:45:43.795052Z", "event_type": "boot", "payload": {"config_hash": "init"}}

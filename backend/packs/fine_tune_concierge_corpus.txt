@@ -1,0 +1,3 @@
+Fine-Tuning on AMD:
+Use bitsandbytes library with ROCm for 4-bit quantization.
+LoRA targets attention matrices for memory efficiency.

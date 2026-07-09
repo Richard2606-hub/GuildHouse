@@ -1,0 +1,3 @@
+Safety SOP 101:
+Before maintenance, perform LOTO. Ensure all energy sources are isolated.
+Wear Class 2 PPE in Sector B.
