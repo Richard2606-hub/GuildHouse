@@ -3,3 +3,6 @@ uvicorn
 pyyaml
 httpx
 python-dotenv
+scikit-learn
+numpy
+pydantic
