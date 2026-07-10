@@ -5,14 +5,12 @@ export default function PackStudio() {
   const [selectedPack, setSelectedPack] = useState(null);
   const [yamlContent, setYamlContent] = useState('');
   const [originalContent, setOriginalContent] = useState('');
-  const [loading, setLoading] = useState(false);
   const [editorLoading, setEditorLoading] = useState(false);
   const [status, setStatus] = useState({ type: '', message: '' });
   const [versionBumped, setVersionBumped] = useState(false);
   const [activeMobileTab, setActiveMobileTab] = useState('editor'); // 'editor' | 'reference'
 
   const fetchPacks = () => {
-    setLoading(true);
     fetch('/api/packs')
       .then(res => res.json())
       .then(data => {
@@ -26,11 +24,10 @@ export default function PackStudio() {
           const updated = data.packs.find(p => p.name === selectedPack.name);
           if (updated) setSelectedPack(updated);
         }
-        setLoading(false);
       })
       .catch(err => {
+        console.error(err);
         setStatus({ type: 'error', message: 'Failed to load packs registry.' });
-        setLoading(false);
       });
   };
 
@@ -49,6 +46,7 @@ export default function PackStudio() {
         setEditorLoading(false);
       })
       .catch(err => {
+        console.error(err);
         setStatus({ type: 'error', message: `Could not fetch raw YAML for ${packName}` });
         setEditorLoading(false);
       });
@@ -56,6 +54,7 @@ export default function PackStudio() {
 
   useEffect(() => {
     fetchPacks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSelectPack = (pack) => {
@@ -91,6 +90,7 @@ export default function PackStudio() {
         });
       }
     } catch (err) {
+      console.error(err);
       setStatus({ type: 'error', message: 'Error communicating with saving API.' });
     }
     setEditorLoading(false);

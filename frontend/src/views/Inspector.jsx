@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
+const diagList = [
+  { name: "Resident Brain Engine Probe", detail: "Checking local Gemma 2 GGUF serving on ROCm GPU path." },
+  { name: "Installed Packs Integrity check", detail: "Verifying registries for ScamShield, MyInvois, and LectureForge." },
+  { name: "Grounding Coverage Floor verification", detail: "Testing fact-lock enforcement over simulated under-grounded drafts." },
+  { name: "Sovereign Redaction Policy check", detail: "Validating redaction of sensitive identifiers before boundary crossing." },
+  { name: "Shared Budget Valve check", detail: "Testing Fireworks spend ceilings and fallback Local hedges." },
+  { name: "Atomic Swapper Debouncer", detail: "Debouncing file changes and verifying hot-reload registry snapshots." },
+  { name: "Ledger Reconstruction test", detail: "Validating chronological event streams and session trace reconstruction." }
+];
+
 export default function Inspector() {
   const [events, setEvents] = useState([]);
   const [activeTab, setActiveTab] = useState('timeline');
@@ -10,16 +20,6 @@ export default function Inspector() {
   // Diagnostics States
   const [diagState, setDiagState] = useState('idle');
   const [diagStep, setDiagStep] = useState(0);
-
-  const diagList = [
-    { name: "Resident Brain Engine Probe", detail: "Checking local Gemma 2 GGUF serving on ROCm GPU path." },
-    { name: "Installed Packs Integrity check", detail: "Verifying registries for ScamShield, MyInvois, and LectureForge." },
-    { name: "Grounding Coverage Floor verification", detail: "Testing fact-lock enforcement over simulated under-grounded drafts." },
-    { name: "Sovereign Redaction Policy check", detail: "Validating redaction of sensitive identifiers before boundary crossing." },
-    { name: "Shared Budget Valve check", detail: "Testing Fireworks spend ceilings and fallback Local hedges." },
-    { name: "Atomic Swapper Debouncer", detail: "Debouncing file changes and verifying hot-reload registry snapshots." },
-    { name: "Ledger Reconstruction test", detail: "Validating chronological event streams and session trace reconstruction." }
-  ];
 
   const fetchLedger = () => {
     fetch('/api/ledger')

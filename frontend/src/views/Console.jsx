@@ -2,9 +2,84 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+// pre-recorded session timeline representation for presentation demo
+const demoScript = [
+  { 
+    role: 'user', 
+    content: "[Ingesting receipt image: paper_receipt.jpg] Process receipt compliance validation.",
+    file: { name: 'paper_receipt.jpg', type: 'image' }
+  },
+  { 
+    role: 'clerk', 
+    content: `[Rules Enforced: 2 checks passed] Extracted receipt fields:
+- Supplier: Store X Sdn Bhd
+- Total Amount: RM 45.00
+- LHDN Tax ID: missing or invalid
+
+Compliance Warning: Malaysian LHDN e-invoice format mandates a valid Tax ID / TIN. Please supply your Tax ID to proceed.`,
+    trace: {
+      id: 'trace-d1',
+      escalated: false,
+      confidence: 0.88,
+      latencyMs: 780,
+      steps: [
+        { name: 'Request Intake', status: 'success', detail: 'Received receipt and validated bounds.' },
+        { name: 'Tool Extraction', status: 'success', detail: 'Vision model extracted supplier name and totals locally.' },
+        { name: 'Local Draft (Gemma)', status: 'success', detail: 'Drafted compliance logs. Confidence: 88%' },
+        { name: 'Confidence Gating', status: 'success', detail: 'Confidence above threshold. Local inference approved.' },
+        { name: 'Rules Validation', status: 'success', detail: 'Flagged defect: missing required Tax ID TIN field.' },
+        { name: 'Persona Rendering', status: 'success', detail: 'Applied voice: hedgeless compliance clerk.' }
+      ]
+    }
+  },
+  { 
+    role: 'user', 
+    content: "LHDN Tax ID provided: MY123456789" 
+  },
+  { 
+    role: 'clerk', 
+    content: `[Rules Enforced: 3 checks passed] E-Invoice compliant draft successfully verified and validation records appended to house ledger!
+
+Compliant E-Invoice Draft Output:
+- Supplier Name: Store X Sdn Bhd
+- Transaction Total: RM 45.00
+- LHDN TIN/Tax ID: MY123456789
+
+Status: Compliant. Ready for LHDN gateway ingestion.`,
+    trace: {
+      id: 'trace-d2',
+      escalated: false,
+      confidence: 0.95,
+      latencyMs: 440,
+      steps: [
+        { name: 'Request Intake', status: 'success', detail: 'Received Tax ID correction.' },
+        { name: 'Local Draft (Gemma)', status: 'success', detail: 'Evaluated TIN check. Confidence: 95%' },
+        { name: 'Confidence Gating', status: 'success', detail: 'Gating passed. Local model serving.' },
+        { name: 'Rules Validation', status: 'success', detail: 'Verified LHDN checksum and arithmetic.' },
+        { name: 'Persona Rendering', status: 'success', detail: 'Applied voice: hedgeless compliance clerk.' }
+      ]
+    }
+  }
+];
+
+// Pre-configured simulated files for demonstrating local tool integrations
+const mockFiles = {
+  scamshield: [
+    { name: 'parcel_scam_screenshot.png', type: 'image', label: '📸 Scam Screenshot' },
+    { name: 'bank_alert_sms.jpg', type: 'image', label: '📸 Fake SMS Alert' }
+  ],
+  myinvois_clerk: [
+    { name: 'paper_receipt.jpg', type: 'image', label: '📸 Paper Receipt' },
+    { name: 'supplier_invoice.pdf', type: 'document', label: '📄 PDF Invoice' }
+  ],
+  lectureforge: [
+    { name: 'physics_lecture_clip.mp4', type: 'video', label: '🎥 Physics Lecture' },
+    { name: 'ml_lecture_notes.pdf', type: 'document', label: '📄 ML Lecture Notes' }
+  ]
+};
+
 export default function Console() {
   const [messages, setMessages] = useState([]);
-  const [sovereignActive, setSovereignActive] = useState(false);
   const [input, setInput] = useState('');
   const [packs, setPacks] = useState([]);
   const [selectedPack, setSelectedPack] = useState('');
@@ -13,94 +88,9 @@ export default function Console() {
   const chatEndRef = useRef(null);
 
   // Demo Replay States
-  const [isDemoMode, setIsDemoMode] = useState(false);
   const [demoStep, setDemoStep] = useState(0);
   const [isDemoPlaying, setIsDemoPlaying] = useState(false);
 
-  // pre-recorded session timeline representation for presentation demo
-  const demoScript = [
-    { 
-      role: 'user', 
-      content: "[Ingesting receipt image: paper_receipt.jpg] Process receipt compliance validation.",
-      file: { name: 'paper_receipt.jpg', type: 'image' }
-    },
-    { 
-      role: 'clerk', 
-      content: `[Rules Enforced: 2 checks passed] Extracted receipt fields:
-- Supplier: Store X Sdn Bhd
-- Total Amount: RM 45.00
-- LHDN Tax ID: missing or invalid
-
-Compliance Warning: Malaysian LHDN e-invoice format mandates a valid Tax ID / TIN. Please supply your Tax ID to proceed.`,
-      trace: {
-        id: 'trace-d1',
-        escalated: false,
-        confidence: 0.88,
-        latencyMs: 780,
-        steps: [
-          { name: 'Request Intake', status: 'success', detail: 'Received receipt and validated bounds.' },
-          { name: 'Tool Extraction', status: 'success', detail: 'Vision model extracted supplier name and totals locally.' },
-          { name: 'Local Draft (Gemma)', status: 'success', detail: 'Drafted compliance logs. Confidence: 88%' },
-          { name: 'Confidence Gating', status: 'success', detail: 'Confidence above threshold. Local inference approved.' },
-          { name: 'Rules Validation', status: 'success', detail: 'Flagged defect: missing required Tax ID TIN field.' },
-          { name: 'Persona Rendering', status: 'success', detail: 'Applied voice: hedgeless compliance clerk.' }
-        ]
-      }
-    },
-    { 
-      role: 'user', 
-      content: "LHDN Tax ID provided: MY123456789" 
-    },
-    { 
-      role: 'clerk', 
-      content: `[Rules Enforced: 3 checks passed] E-Invoice compliant draft successfully verified and validation records appended to house ledger!
-
-Compliant E-Invoice Draft Output:
-- Supplier Name: Store X Sdn Bhd
-- Transaction Total: RM 45.00
-- LHDN TIN/Tax ID: MY123456789
-
-Status: Compliant. Ready for LHDN gateway ingestion.`,
-      trace: {
-        id: 'trace-d2',
-        escalated: false,
-        confidence: 0.95,
-        latencyMs: 440,
-        steps: [
-          { name: 'Request Intake', status: 'success', detail: 'Received Tax ID correction.' },
-          { name: 'Local Draft (Gemma)', status: 'success', detail: 'Evaluated TIN check. Confidence: 95%' },
-          { name: 'Confidence Gating', status: 'success', detail: 'Gating passed. Local model serving.' },
-          { name: 'Rules Validation', status: 'success', detail: 'Verified LHDN checksum and arithmetic.' },
-          { name: 'Persona Rendering', status: 'success', detail: 'Applied voice: hedgeless compliance clerk.' }
-        ]
-      }
-    }
-  ];
-
-  // Pre-configured simulated files for demonstrating local tool integrations
-  const mockFiles = {
-    scamshield: [
-      { name: 'parcel_scam_screenshot.png', type: 'image', label: '📸 Scam Screenshot' },
-      { name: 'bank_alert_sms.jpg', type: 'image', label: '📸 Fake SMS Alert' }
-    ],
-    myinvois_clerk: [
-      { name: 'paper_receipt.jpg', type: 'image', label: '📸 Paper Receipt' },
-      { name: 'supplier_invoice.pdf', type: 'document', label: '📄 PDF Invoice' }
-    ],
-    lectureforge: [
-      { name: 'physics_lecture_clip.mp4', type: 'video', label: '🎥 Physics Lecture' },
-      { name: 'ml_lecture_notes.pdf', type: 'document', label: '📄 ML Lecture Notes' }
-    ]
-  };
-
-  useEffect(() => {
-    const checkSovereign = () => {
-      setSovereignActive(localStorage.getItem('sovereign_mode') === 'true');
-    };
-    checkSovereign();
-    window.addEventListener('sovereignModeChange', checkSovereign);
-    return () => window.removeEventListener('sovereignModeChange', checkSovereign);
-  }, []);
 
   useEffect(() => {
     fetch('/api/packs')
@@ -123,40 +113,24 @@ Status: Compliant. Ready for LHDN gateway ingestion.`,
     let timer;
     if (isDemoPlaying && demoStep < demoScript.length) {
       timer = setTimeout(() => {
-        handleNextDemoStep();
+        // Spike GPU load visually
+        window.dispatchEvent(new Event('gpuSpike'));
+        setTimeout(() => {
+          const nextMsg = demoScript[demoStep];
+          setMessages(prev => [...prev, {
+            ...nextMsg,
+            timestamp: new Date().toISOString(),
+            pack: 'myinvois_clerk'
+          }]);
+          setDemoStep(prev => prev + 1);
+          window.dispatchEvent(new Event('gpuIdle'));
+        }, 600);
       }, 3000);
     } else if (demoStep >= demoScript.length) {
       setIsDemoPlaying(false);
     }
     return () => clearTimeout(timer);
   }, [isDemoPlaying, demoStep]);
-
-  const handleNextDemoStep = () => {
-    if (demoStep >= demoScript.length) return;
-    
-    // Spike GPU load visually
-    window.dispatchEvent(new Event('gpuSpike'));
-    setTimeout(() => {
-      const nextMsg = demoScript[demoStep];
-      setMessages(prev => [...prev, {
-        ...nextMsg,
-        timestamp: new Date().toISOString(),
-        pack: 'myinvois_clerk'
-      }]);
-      setDemoStep(prev => prev + 1);
-      window.dispatchEvent(new Event('gpuIdle'));
-    }, 600);
-  };
-
-  const handleRestartDemo = () => {
-    setMessages([]);
-    setDemoStep(0);
-    setIsDemoPlaying(false);
-  };
-
-  const handlePlayPauseDemo = () => {
-    setIsDemoPlaying(!isDemoPlaying);
-  };
 
 
   const handleSend = async (textToSend, extraPayload = {}) => {
@@ -194,6 +168,7 @@ Status: Compliant. Ready for LHDN gateway ingestion.`,
         pack: selectedPack
       }]);
     } catch (err) {
+      console.error(err);
       setMessages(prev => [...prev, { 
         role: 'clerk', 
         content: 'Error communicating with the sovereign runtime house.',

@@ -47,14 +47,14 @@ export default function Sidebar({ activeView, setActiveView, startTour, onExit }
 
     // Dynamic metrics updating
     const interval = setInterval(() => {
-      setVram(v => {
+      setVram(() => {
         if (isProcessing) {
           return +(15.5 + Math.random() * 1.5).toFixed(2);
         }
         return +(8.5 + Math.random() * 0.6).toFixed(2);
       });
 
-      setTemp(t => {
+      setTemp(() => {
         if (isProcessing) {
           return Math.floor(62 + Math.random() * 4);
         }

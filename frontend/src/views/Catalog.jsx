@@ -310,6 +310,7 @@ tools: ${JSON.stringify(formTools)}
         setWizardError(data.message || 'Validation failed. Check your input values.');
       }
     } catch (err) {
+      console.error(err);
       setWizardError('Error communicating with deployment endpoint.');
     }
     setWizardLoading(false);
