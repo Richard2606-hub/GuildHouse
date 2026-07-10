@@ -146,7 +146,7 @@
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/your-org/GuildHouse.git
+git clone https://github.com/Richard2606-hub/GuildHouse.git
 cd GuildHouse
 cp .env.example .env
 # Edit .env and add your FIREWORKS_API_KEY
