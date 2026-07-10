@@ -29,7 +29,7 @@ export default function Landing({ onEnter }) {
           </button>
         </div>
 
-        <div className="pt-16 grid grid-cols-3 gap-8 text-center border-t border-[#30363d]/50 w-full">
+        <div className="pt-16 grid grid-cols-1 md:grid-cols-3 gap-8 text-center border-t border-[#30363d]/50 w-full">
           <div>
             <div className="text-2xl mb-2">🔒</div>
             <h3 className="text-sm font-bold text-white mb-1">Local-First Privacy</h3>

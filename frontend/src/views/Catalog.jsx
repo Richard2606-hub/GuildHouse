@@ -483,20 +483,20 @@ tools: ${JSON.stringify(formTools)}
       {/* LIVE KNOWLEDGE CORPUS BROWSER MODAL */}
       {activeCorpusPack && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fadeIn">
-          <div className="bg-[#161b22] border-2 border-[#58a6ff]/40 rounded-2xl w-full max-w-4xl h-[500px] shadow-2xl flex overflow-hidden">
+          <div className="bg-[#161b22] border-2 border-[#58a6ff]/40 rounded-2xl w-full max-w-4xl h-[90vh] md:h-[500px] shadow-2xl flex flex-col md:flex-row overflow-hidden">
             
             {/* Left Files List Panel */}
-            <div className="w-80 border-r border-[#30363d] flex flex-col bg-[#0d1117] shrink-0">
+            <div className="w-full md:w-80 border-b md:border-b-0 md:border-r border-[#30363d] flex flex-col bg-[#0d1117] shrink-0">
               <div className="p-4 border-b border-[#30363d] bg-[#161b22]">
                 <h4 className="text-xs font-bold text-white uppercase tracking-wider">📚 Knowledge Corpus</h4>
                 <p className="text-[10px] text-[#8b949e] mt-0.5">Pack: {activeCorpusPack.name}</p>
               </div>
-              <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              <div className="flex-1 overflow-x-auto md:overflow-y-auto p-2 flex md:flex-col gap-1 max-h-[120px] md:max-h-full">
                 {activeCorpusPack.files.map((file) => (
                   <button
                     key={file.name}
                     onClick={() => setSelectedFile(file)}
-                    className={`w-full text-left p-3 rounded-lg text-xs transition-all flex flex-col gap-1 ${
+                    className={`text-left p-3 rounded-lg text-xs transition-all flex flex-col gap-1 min-w-[200px] md:min-w-0 shrink-0 ${
                       selectedFile?.name === file.name 
                         ? 'bg-[#1f6feb]/15 border border-[#1f6feb]/30 text-[#58a6ff]' 
                         : 'hover:bg-[#161b22] border border-transparent text-[#8b949e] hover:text-white'
@@ -507,7 +507,7 @@ tools: ${JSON.stringify(formTools)}
                   </button>
                 ))}
               </div>
-              <div className="p-4 border-t border-[#30363d] bg-[#161b22]/30">
+              <div className="p-4 border-t border-[#30363d] bg-[#161b22]/30 hidden md:block">
                 <button
                   onClick={() => setActiveCorpusPack(null)}
                   className="w-full py-2 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-xs font-bold uppercase tracking-wider rounded-xl transition-all"
@@ -523,12 +523,20 @@ tools: ${JSON.stringify(formTools)}
                 <div className="flex-1 flex flex-col overflow-hidden">
                   <div className="p-4 border-b border-[#30363d] bg-[#161b22] flex justify-between items-center shrink-0">
                     <div>
-                      <h4 className="text-xs font-bold text-white font-mono">{selectedFile.name}</h4>
+                      <h4 className="text-xs font-bold text-white font-mono truncate max-w-[200px] md:max-w-none">{selectedFile.name}</h4>
                       <p className="text-[9px] text-[#8b949e] uppercase font-bold tracking-wider mt-0.5">Vectored Chunk Data</p>
                     </div>
-                    <span className="bg-[#238636]/15 text-[#3fb950] border border-[#2ea043]/30 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider font-mono">
-                      Grounding OK
-                    </span>
+                    <div className="flex gap-2 items-center">
+                      <span className="hidden sm:inline bg-[#238636]/15 text-[#3fb950] border border-[#2ea043]/30 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider font-mono">
+                        Grounding OK
+                      </span>
+                      <button 
+                        onClick={() => setActiveCorpusPack(null)} 
+                        className="md:hidden text-xs text-[#ff7b72] border border-[#ff7b72]/30 px-3 py-1 rounded-xl bg-[#da3633]/15 font-bold"
+                      >
+                        Close
+                      </button>
+                    </div>
                   </div>
                   <div className="flex-1 p-6 overflow-y-auto font-mono text-xs text-[#c9d1d9] leading-relaxed whitespace-pre-wrap">
                     {selectedFile.content}

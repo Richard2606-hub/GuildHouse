@@ -248,8 +248,8 @@ export default function Inspector() {
                 </button>
               </div>
 
-              <div className="bg-[#161b22] border border-[#30363d] rounded-2xl overflow-hidden">
-                <table className="w-full text-left border-collapse text-xs">
+              <div className="bg-[#161b22] border border-[#30363d] rounded-2xl overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs min-w-[800px]">
                   <thead>
                     <tr className="border-b border-[#30363d] bg-[#0d1117] text-[#8b949e]">
                       <th className="p-4 font-bold uppercase tracking-wider">Timestamp</th>

@@ -331,8 +331,8 @@ Status: Compliant. Ready for LHDN gateway ingestion.`,
               </span>
             </div>
 
-            <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden text-xs">
-              <table className="w-full text-left border-collapse">
+            <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-x-auto text-xs">
+              <table className="w-full text-left border-collapse min-w-[500px]">
                 <thead>
                   <tr className="border-b border-[#30363d] bg-[#161b22]">
                     <th className="p-3 text-[#8b949e] font-semibold">Field</th>

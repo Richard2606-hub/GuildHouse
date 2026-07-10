@@ -11,6 +11,7 @@ export default function App() {
   const [activeView, setActiveView] = useState('console');
   const [showTour, setShowTour] = useState(false);
   const [tourStep, setTourStep] = useState(1);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const startTour = () => {
     setActiveView('console');
@@ -68,13 +69,52 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-[#0d1117] text-[#c9d1d9] font-sans selection:bg-[#58a6ff]/30 relative overflow-hidden bg-grid-pattern">
-      <Sidebar activeView={activeView} setActiveView={setActiveView} startTour={startTour} onExit={() => setIsDashboard(false)} />
+    <div className="flex h-screen bg-[#0d1117] text-[#c9d1d9] font-sans selection:bg-[#58a6ff]/30 relative overflow-hidden bg-grid-pattern flex-col md:flex-row">
       
-      {activeView === 'console' && <Console />}
-      {activeView === 'inspector' && <Inspector />}
-      {activeView === 'catalog' && <Catalog />}
-      {activeView === 'studio' && <PackStudio />}
+      {/* Mobile Header (Hidden on md and larger) */}
+      <div className="md:hidden flex items-center justify-between px-6 py-4 bg-[#161b22] border-b border-[#30363d] shrink-0">
+        <h1 className="text-xl font-black text-white flex items-center gap-2">
+          <span className="text-[#58a6ff] drop-shadow-[0_0_8px_rgba(88,166,255,0.4)]">🏰</span> GuildHouse
+        </h1>
+        <button
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          className="text-white bg-[#21262d] border border-[#30363d] p-2 rounded-xl text-lg hover:bg-[#30363d] transition-all"
+        >
+          {isMobileMenuOpen ? '✕' : '☰'}
+        </button>
+      </div>
+
+      {/* Sidebar - Mobile Drawer Transition */}
+      <div className={`
+        fixed inset-y-0 left-0 z-40 transform transition-transform duration-300 md:relative md:translate-x-0
+        ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+        <Sidebar 
+          activeView={activeView} 
+          setActiveView={(view) => {
+            setActiveView(view);
+            setIsMobileMenuOpen(false);
+          }} 
+          startTour={startTour} 
+          onExit={() => setIsDashboard(false)} 
+        />
+      </div>
+
+      {/* Mobile Drawer Overlay Backdrop */}
+      {isMobileMenuOpen && (
+        <div 
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-30 md:hidden animate-fadeIn"
+        />
+      )}
+
+      {/* Main Panel views */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {activeView === 'console' && <Console />}
+        {activeView === 'inspector' && <Inspector />}
+        {activeView === 'catalog' && <Catalog />}
+        {activeView === 'studio' && <PackStudio />}
+      </div>
 
       {/* Floating Tour Guide Overlay */}
       {showTour && (

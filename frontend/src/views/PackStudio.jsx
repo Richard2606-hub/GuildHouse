@@ -9,6 +9,7 @@ export default function PackStudio() {
   const [editorLoading, setEditorLoading] = useState(false);
   const [status, setStatus] = useState({ type: '', message: '' });
   const [versionBumped, setVersionBumped] = useState(false);
+  const [activeMobileTab, setActiveMobileTab] = useState('editor'); // 'editor' | 'reference'
 
   const fetchPacks = () => {
     setLoading(true);
@@ -106,21 +107,21 @@ export default function PackStudio() {
   const lineNumbers = (yamlContent || '').split('\n').map((_, index) => index + 1).join('\n');
 
   return (
-    <div className="flex-1 flex h-screen bg-[#0d1117] text-[#c9d1d9] overflow-hidden animate-fadeIn">
+    <div className="flex-1 flex flex-col lg:flex-row h-screen bg-[#0d1117] text-[#c9d1d9] overflow-hidden animate-fadeIn">
       {/* Pack Selection Sidebar */}
-      <div className="w-80 border-r border-[#30363d] bg-[#161b22]/50 flex flex-col">
-        <div className="p-6 border-b border-[#30363d]">
-          <h2 className="text-lg font-bold text-white mb-1">Pack Studio</h2>
-          <p className="text-xs text-[#8b949e]">Hot-reload rules & schemas instantly.</p>
+      <div className="w-full lg:w-80 border-b lg:border-b-0 lg:border-r border-[#30363d] bg-[#161b22]/50 flex flex-col max-h-[160px] lg:max-h-full shrink-0">
+        <div className="p-4 lg:p-6 border-b border-[#30363d] hidden sm:block">
+          <h2 className="text-md lg:text-lg font-bold text-white mb-1">Pack Studio</h2>
+          <p className="text-[11px] text-[#8b949e]">Hot-reload rules & schemas instantly.</p>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-x-auto lg:overflow-y-auto p-4 flex lg:flex-col gap-3">
           {packs.map((p) => {
             const isSelected = selectedPack && selectedPack.name === p.name;
             return (
               <button
                 key={p.name}
                 onClick={() => handleSelectPack(p)}
-                className={`w-full text-left p-4 rounded-xl border transition-all ${
+                className={`text-left p-4 rounded-xl border transition-all shrink-0 min-w-[200px] lg:min-w-0 lg:w-full ${
                   isSelected
                     ? 'bg-[#1f6feb]/15 border-[#1f6feb] text-white shadow-lg shadow-[#1f6feb]/5'
                     : 'bg-[#161b22] border-[#30363d] text-[#c9d1d9] hover:border-[#8b949e]'
@@ -154,12 +155,12 @@ export default function PackStudio() {
       {selectedPack ? (
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Editor Header */}
-          <div className="h-16 border-b border-[#30363d] bg-[#161b22] px-8 flex items-center justify-between">
+          <div className="h-16 border-b border-[#30363d] bg-[#161b22] px-6 lg:px-8 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-3">
               <span className="text-xl">🛠️</span>
               <div>
                 <h3 className="text-md font-bold text-white flex items-center gap-2">
-                  Editing: <span className="text-[#58a6ff]">{selectedPack.name}</span>
+                  Editing: <span className="text-[#58a6ff] truncate max-w-[120px] sm:max-w-none">{selectedPack.name}</span>
                   <span className={`text-xs px-2 py-0.5 rounded font-mono font-bold bg-[#238636]/20 text-[#3fb950] border border-[#2ea043]/30 transition-all ${
                     versionBumped ? 'scale-110 rotate-3 bg-[#388bfd]/20 text-[#58a6ff] border-[#388bfd]/30' : ''
                   }`}>
@@ -169,36 +170,56 @@ export default function PackStudio() {
               </div>
             </div>
 
-            <div className="flex gap-3">
+            <div className="flex gap-2 sm:gap-3">
               <button
                 onClick={handleReset}
                 disabled={editorLoading || yamlContent === originalContent}
-                className="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-white px-4 py-2 rounded-xl text-sm font-semibold transition-all disabled:opacity-40"
+                className="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-white px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all disabled:opacity-40"
               >
-                Discard Changes
+                Discard
               </button>
               <button
                 onClick={handleSave}
                 disabled={editorLoading || yamlContent === originalContent}
-                className="bg-[#238636] hover:bg-[#2ea043] border border-[#238636]/30 text-white px-5 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 disabled:opacity-40"
+                className="bg-[#238636] hover:bg-[#2ea043] border border-[#238636]/30 text-white px-3 sm:px-5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-1 sm:gap-2 disabled:opacity-40"
               >
-                {editorLoading ? 'Validating...' : '🔥 Save & Hot-Reload'}
+                {editorLoading ? 'Validating...' : '🔥 Save'}
               </button>
             </div>
+          </div>
+
+          {/* Mobile sub-tabs for Editor vs Reference (Hidden on lg screens) */}
+          <div className="flex lg:hidden border-b border-[#30363d] bg-[#161b22]/30 shrink-0">
+            <button
+              onClick={() => setActiveMobileTab('editor')}
+              className={`flex-1 py-2.5 text-xs font-bold text-center border-r border-[#30363d] transition-all ${
+                activeMobileTab === 'editor' ? 'bg-[#0d1117] text-[#58a6ff]' : 'text-[#8b949e]'
+              }`}
+            >
+              📝 Code Editor
+            </button>
+            <button
+              onClick={() => setActiveMobileTab('reference')}
+              className={`flex-1 py-2.5 text-xs font-bold text-center transition-all ${
+                activeMobileTab === 'reference' ? 'bg-[#0d1117] text-[#58a6ff]' : 'text-[#8b949e]'
+              }`}
+            >
+              📖 Reference & Logs
+            </button>
           </div>
 
           {/* Main workspace (split screen) */}
           <div className="flex-1 flex overflow-hidden">
             {/* YAML Editor Panel */}
-            <div className="flex-1 flex bg-[#090d13] relative overflow-hidden">
-              <div className="w-12 select-none py-4 bg-[#0d1117] border-r border-[#30363d] text-[#30363d] font-mono text-xs text-right pr-3 overflow-hidden leading-6">
+            <div className={`flex-1 flex bg-[#090d13] relative overflow-hidden ${activeMobileTab === 'editor' ? 'flex' : 'hidden lg:flex'}`}>
+              <div className="w-10 select-none py-4 bg-[#0d1117] border-r border-[#30363d] text-[#30363d] font-mono text-[10px] text-right pr-2 overflow-hidden leading-6">
                 <pre>{lineNumbers}</pre>
               </div>
               <textarea
                 value={yamlContent}
                 onChange={(e) => setYamlContent(e.target.value)}
                 spellCheck="false"
-                className="flex-1 p-4 bg-transparent text-[#e6edf3] font-mono text-sm leading-6 focus:outline-none resize-none overflow-y-auto"
+                className="flex-1 p-4 bg-transparent text-[#e6edf3] font-mono text-xs sm:text-sm leading-6 focus:outline-none resize-none overflow-y-auto"
                 style={{ tabSize: 2 }}
                 placeholder="Write your pack declarative config in YAML..."
               />
@@ -213,7 +234,7 @@ export default function PackStudio() {
             </div>
 
             {/* Reference & System Status logs */}
-            <div className="w-96 border-l border-[#30363d] bg-[#161b22]/30 flex flex-col overflow-y-auto">
+            <div className={`w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-[#30363d] bg-[#161b22]/30 flex flex-col overflow-y-auto ${activeMobileTab === 'reference' ? 'flex' : 'hidden lg:flex'}`}>
               <div className="p-6 border-b border-[#30363d]">
                 <h4 className="text-sm font-bold text-white uppercase tracking-wider mb-2">Engine Feedback</h4>
                 
