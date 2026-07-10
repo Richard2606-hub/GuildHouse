@@ -15,7 +15,7 @@
 [![Fireworks AI](https://img.shields.io/badge/Fireworks_AI-Inference-FF0000?style=for-the-badge)](https://fireworks.ai/)
 [![AMD ROCm](https://img.shields.io/badge/AMD-ROCm-ED1C24?style=for-the-badge&logo=amd&logoColor=white)](https://www.amd.com/en/products/software/rocm.html)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
-[![License](https://img.shields.io/badge/License-See%20Repo-22C55E?style=for-the-badge)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](LICENSE)
 
 <br/>
 
@@ -42,6 +42,7 @@
 - [Frontend Views](#-frontend-views)
 - [Troubleshooting](#-troubleshooting)
 - [Contributing](#-contributing)
+- [License](#-license)
 
 ---
 
@@ -547,10 +548,20 @@ Check `ESCALATION_THRESHOLD` in your `.env`. A higher value (closer to `1.0`) ma
 
 ---
 
+## 📄 License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for full details.
+
+Built and submitted for the **[AMD Developer Hackathon: ACT II](https://lablab.ai/event/amd-developer-hackathon-act-2)** hosted on [lablab.ai](https://lablab.ai).
+
+---
+
 <div align="center">
 
 Built with ❤️ for the **AMD Developer Hackathon: ACT II** on lablab.ai
 
 *YAML Packs · Confidence-Gated Escalation · Audit Ledger · Sovereign Mode*
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=flat-square)](LICENSE)
 
 </div>
