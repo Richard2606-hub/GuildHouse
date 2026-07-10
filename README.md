@@ -1,116 +1,148 @@
-﻿# 🏰 GuildHouse
+<div align="center">
 
-> **Sovereign AI Clerk Appliance** — A privacy-first, multi-tenant AI runtime that deploys specialized "clerk" agents from hot-swappable YAML packs.
+# 🏰 GuildHouse
 
-GuildHouse is an edge-deployable AI platform designed for organizations that need domain-specific AI assistants with strict compliance boundaries, data-sovereignty guarantees, and real-time auditability. Built on top of **Fireworks AI** (with AMD ROCm GPU support), it routes queries through a two-tier confidence pipeline — cheap models handle routine traffic; expensive models are only invoked when confidence is low.
+### Sovereign AI Clerk Appliance — Web Edition
+
+**A privacy-first, multi-tenant AI runtime that deploys domain-specific "clerk" agents from hot-swappable YAML packs.**
+
+<br/>
+
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vitejs.dev/)
+[![Fireworks AI](https://img.shields.io/badge/Fireworks_AI-Inference-FF0000?style=for-the-badge)](https://fireworks.ai/)
+[![AMD ROCm](https://img.shields.io/badge/AMD-ROCm-ED1C24?style=for-the-badge&logo=amd&logoColor=white)](https://www.amd.com/en/products/software/rocm.html)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-See%20Repo-22C55E?style=for-the-badge)](LICENSE)
+
+<br/>
+
+> YAML Packs · Confidence-Gated Escalation · Audit Ledger · Sovereign Mode · 18 Built-in Clerks
+
+</div>
 
 ---
 
-## ✨ Key Features
+## 📋 Table of Contents
 
-| Feature | Description |
+- [Overview](#-overview)
+- [Architecture](#-architecture)
+- [Features](#-features)
+- [Prerequisites](#-prerequisites)
+- [Quick Start](#-quick-start)
+- [Docker Deployment](#-docker-deployment)
+- [Environment Variables](#-environment-variables)
+- [The Pack System](#-the-pack-system)
+- [API Reference](#-api-reference)
+- [Request Pipeline](#-request-pipeline)
+- [Compliance & Data Sovereignty](#-compliance--data-sovereignty)
+- [File Structure](#-file-structure)
+- [Frontend Views](#-frontend-views)
+- [Troubleshooting](#-troubleshooting)
+- [Contributing](#-contributing)
+
+---
+
+## 🌟 Overview
+
+**GuildHouse** is an edge-deployable AI platform for organizations that need domain-specific AI assistants with strict compliance boundaries, data-sovereignty guarantees, and real-time auditability. It pairs a React console with a Python FastAPI backend, routing every query through a two-tier confidence pipeline — a cheap model handles routine traffic, a premium model is invoked only when confidence is low — with every decision written to an append-only audit ledger.
+
+| Capability | Detail |
 |---|---|
-| **Pack System** | Define AI clerks as YAML manifests. Hot-reload without restarting the server. |
-| **Confidence Gate** | A judge model scores every draft response; only escalates to a premium model when necessary. |
-| **Rules Engine** | Post-generation validation: forbidden-topic detection and PII redaction before the response is sent. |
-| **Persona Rendering** | Each clerk speaks in its own configured voice and stance, enforced at the system-prompt level. |
-| **Retrieval (RAG)** | TF-IDF based per-pack knowledge retrieval from corpus `.txt` files. No external vector DB needed. |
-| **Tool System** | Pack-gated tools (OCR, Vision, Media Pipeline) simulated via LLM when no hardware OCR is attached. |
-| **Audit Ledger** | Every request, escalation, and tool call is persisted to a structured JSONL ledger for compliance. |
-| **Sovereign Mode** | Toggle to cut off all external API calls — forces local-only inference, preventing data egress. |
-| **Docker Support** | Full `docker-compose` stack with optional AMD ROCm/vLLM integration. |
+| 📦 Pack System | Clerks defined as YAML manifests, hot-reloaded without restart |
+| 🎯 Confidence Gate | Judge model scores every draft; escalates below threshold |
+| 🛡️ Rules Engine | Forbidden-topic detection + PII redaction before send |
+| 🎭 Persona Rendering | Per-pack voice and stance, enforced at the system-prompt level |
+| 🔍 Retrieval (RAG) | TF-IDF per-pack knowledge lookup from corpus `.txt` files |
+| 🧰 Tool System | Pack-gated OCR / vision / media tools, LLM-simulated as fallback |
+| 📜 Audit Ledger | Every request, escalation, and tool call logged to JSONL |
+| 🔒 Sovereign Mode | One toggle cuts all external calls, forcing local-only inference |
 
 ---
 
-## 🏗️ Architecture Overview
+## 🏗️ Architecture
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│                    React Frontend (Vite)                       │
+│                    React Frontend (Vite)                      │
 │  Console · Inspector · Catalog · Pack Studio · Landing        │
 └────────────────────────┬──────────────────────────────────────┘
-                         │ HTTP / REST
+                          │  HTTP / REST
 ┌────────────────────────▼──────────────────────────────────────┐
-│                  FastAPI Backend                               │
-│                                                               │
-│  ┌─────────────┐   ┌──────────────┐   ┌──────────────────┐   │
-│  │ Pack Loader │   │ Session Mgr  │   │   Audit Ledger   │   │
-│  └──────┬──────┘   └──────┬───────┘   └──────────────────┘   │
+│                     FastAPI Backend                           │
+│                                                                │
+│  ┌─────────────┐   ┌──────────────┐   ┌──────────────────┐    │
+│  │ Pack Loader │   │ Session Mgr  │   │   Audit Ledger   │    │
+│  └──────┬──────┘   └──────┬───────┘   └──────────────────┘    │
 │         │                 │                                   │
-│  ┌──────▼─────────────────▼───────────────────────────────┐  │
-│  │              GuildHouse Pipeline                        │  │
-│  │  1. Tool Detection → execute if intent matched          │  │
-│  │  2. Knowledge Retrieval (TF-IDF RAG)                    │  │
-│  │  3. Local Draft (cheap model — GLM-5P1)                 │  │
-│  │  4. Confidence Gate → Escalation if < 0.7 threshold     │  │
-│  │  5. Rules Validation (forbidden topics + redaction)     │  │
-│  │  6. Persona Rendering (voice & stance enforcement)      │  │
-│  └─────────────────────────────────────────────────────────┘  │
-│                         │                                     │
-│  ┌──────────────────────▼─────────────────────────────────┐  │
-│  │               Fireworks AI / vLLM (ROCm)               │  │
-│  │  Local: GLM-5P1    ·    Escalation: DeepSeek-V4-Pro    │  │
-│  └────────────────────────────────────────────────────────┘  │
+│  ┌──────▼─────────────────▼───────────────────────────────┐   │
+│  │              GuildHouse Pipeline                       │   │
+│  │  1. Tool Detection    → execute if intent matched       │   │
+│  │  2. Knowledge Retrieval (TF-IDF RAG)                    │   │
+│  │  3. Local Draft (cheap model — GLM-5P1)                 │   │
+│  │  4. Confidence Gate   → escalate if below threshold     │   │
+│  │  5. Rules Validation  (forbidden topics + redaction)     │   │
+│  │  6. Persona Rendering (voice & stance enforcement)       │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                          │                                     │
+│  ┌───────────────────────▼─────────────────────────────────┐  │
+│  │               Fireworks AI / vLLM (ROCm)                │  │
+│  │   Local: GLM-5P1     ·     Escalation: DeepSeek-V4-Pro  │  │
+│  └──────────────────────────────────────────────────────────┘  │
 └───────────────────────────────────────────────────────────────┘
 ```
 
+### Component Map
+
+| Layer | Technology | Key File(s) |
+|---|---|---|
+| Session pipeline | Python | [`engine/session.py`](backend/engine/session.py) |
+| Local draft engine | Fireworks AI (GLM-5P1) | [`engine/inference.py`](backend/engine/inference.py) |
+| Escalation gateway | Fireworks AI (DeepSeek-V4-Pro) | [`engine/gateway.py`](backend/engine/gateway.py) |
+| Rules engine | Python, regex | [`engine/rules.py`](backend/engine/rules.py) |
+| Persona engine | Python | [`engine/persona.py`](backend/engine/persona.py) |
+| Retrieval (RAG) | scikit-learn TF-IDF | [`engine/retrieval.py`](backend/engine/retrieval.py) |
+| Tool registry | OCR / vision / media | [`engine/tools.py`](backend/engine/tools.py) |
+| Pack loader | YAML | [`engine/loader.py`](backend/engine/loader.py) |
+| Audit ledger | JSONL | [`engine/ledger.py`](backend/engine/ledger.py) |
+| Console | React + Vite | [`frontend/src/views/`](frontend/src/views/) |
+
 ---
 
-## 📁 Project Structure
+## ✨ Features
 
-```
-GuildHouse/
-├── backend/
-│   ├── main.py                 # FastAPI app & all REST endpoints
-│   ├── requirements.txt        # Python dependencies
-│   ├── Dockerfile
-│   ├── engine/
-│   │   ├── config.py           # API keys, model names, thresholds
-│   │   ├── session.py          # SessionManager — orchestrates the full pipeline
-│   │   ├── inference.py        # LocalEngine — cheap-model draft generation
-│   │   ├── gateway.py          # EscalationGateway — confidence gate & escalation
-│   │   ├── rules.py            # RulesEngine — forbidden topic & PII redaction
-│   │   ├── persona.py          # PersonaEngine — final output rendering
-│   │   ├── retrieval.py        # RetrievalEngine — TF-IDF knowledge retrieval
-│   │   ├── tools.py            # ToolsRegistry — OCR, Vision, Media Pipeline
-│   │   ├── loader.py           # PackLoader — YAML pack registry
-│   │   └── ledger.py           # Ledger — JSONL audit trail
-│   ├── packs/
-│   │   ├── *.yaml              # Clerk pack manifests (18 built-in packs)
-│   │   └── *_corpus.txt        # Per-pack knowledge corpora for RAG
-│   └── data/
-│       └── ledger.jsonl        # Runtime audit log (auto-created)
-├── frontend/
-│   ├── src/
-│   │   ├── App.jsx             # Root component, routing, tour
-│   │   ├── components/
-│   │   │   └── Sidebar.jsx     # Navigation, Sovereign Mode toggle
-│   │   └── views/
-│   │       ├── Console.jsx     # Live chat interface with pack selector
-│   │       ├── Inspector.jsx   # Pipeline metadata & audit ledger viewer
-│   │       ├── Catalog.jsx     # Browse & filter all installed packs
-│   │       ├── PackStudio.jsx  # Live YAML editor with hot-reload
-│   │       └── Landing.jsx     # Entry splash page
-│   ├── package.json
-│   ├── vite.config.js
-│   ├── tailwind.config.js
-│   └── Dockerfile
-├── docker-compose.yml          # Full-stack orchestration (+ vLLM ROCm)
-├── .env.example                # Environment variable template
-└── extract.py                  # Utility script for text corpus extraction
-```
+### 🎨 Frontend
+- **Console** — live chat UI with pack selector and message history
+- **Inspector** — full pipeline trace: tokens, confidence, escalation flag, persona
+- **Catalog** — browsable, filterable grid of all installed packs
+- **Pack Studio** — YAML editor with syntax highlighting and one-click hot-reload
+- **Sovereign toggle** — sidebar switch to force local-only inference
+
+### ⚙️ Backend
+- **Confidence-gated escalation** — cheap model drafts, judge model scores, premium model only steps in below threshold
+- **Declarative packs** — persona, rules, escalation policy, and tool grants live entirely in YAML, no code changes needed
+- **Hot-reload** — edit a pack, call reload, the clerk's behaviour changes with zero downtime
+- **Per-pack knowledge retrieval** — TF-IDF search over a pack's own corpus, no external vector database
+- **Structured audit trail** — every escalation, redaction, and tool call written to an append-only JSONL ledger
+
+---
+
+## 📦 Prerequisites
+
+| Requirement | Minimum Version | Check |
+|---|---|---|
+| **Python** | 3.10 | `python --version` |
+| **Node.js** | 18.x | `node --version` |
+| **npm** | 9.x | `npm --version` |
+| **Fireworks AI API key** | — | [fireworks.ai](https://fireworks.ai) |
 
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-- **Python** 3.10+
-- **Node.js** 18+
-- A **Fireworks AI API key** → [fireworks.ai](https://fireworks.ai)
-
-### 1. Clone & Configure
+### 1. Clone and configure
 
 ```bash
 git clone https://github.com/your-org/GuildHouse.git
@@ -119,32 +151,27 @@ cp .env.example .env
 # Edit .env and add your FIREWORKS_API_KEY
 ```
 
-### 2. Start the Backend
+### 2. Start the backend
 
 ```bash
 cd backend
 
-# Create and activate a virtual environment
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # Linux/macOS
 
-# Install dependencies
 pip install -r requirements.txt
-
-# Run the development server
 python -m uvicorn main:app --reload
-# Backend is now live at http://localhost:8000
+# Backend live at http://localhost:8000
 ```
 
-### 3. Start the Frontend
+### 3. Start the frontend
 
 ```bash
 cd frontend
-
 npm install
 npm run dev
-# Frontend is now live at http://localhost:5173
+# Frontend live at http://localhost:5173
 ```
 
 ---
@@ -160,38 +187,36 @@ The `docker-compose.yml` wires together three services:
 | `vllm-rocm` | `8080` | AMD ROCm-accelerated vLLM inference server |
 
 ```bash
-# Set your API keys
 export FIREWORKS_API_KEY=your_key_here
 export HUGGING_FACE_HUB_TOKEN=your_hf_token  # for vLLM model download
 
 docker-compose up --build
 ```
 
-> **Note:** The `vllm-rocm` service requires AMD GPU hardware (`/dev/kfd`, `/dev/dri`). Remove or comment out that service block if running on CPU-only or NVIDIA hardware.
+> **⚠️ Note:** The `vllm-rocm` service requires AMD GPU hardware (`/dev/kfd`, `/dev/dri`). Remove or comment out that service block if running on CPU-only or non-AMD hardware.
 
 ---
 
 ## ⚙️ Environment Variables
 
-Copy `.env.example` to `.env` in the project root and configure:
-
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `FIREWORKS_API_KEY` | ✅ Yes | — | Fireworks AI API key for cloud inference |
-| `LOCAL_MODEL` | No | `accounts/fireworks/models/glm-5p1` | The cheap, fast model used for first-pass drafts |
-| `ESCALATION_MODEL` | No | `accounts/fireworks/models/deepseek-v4-pro` | The premium model used when confidence is low |
-| `JUDGE_MODEL` | No | `accounts/fireworks/models/glm-5p1` | The model that scores draft quality (0.0–1.0) |
+| `LOCAL_MODEL` | No | `accounts/fireworks/models/glm-5p1` | Cheap, fast model for first-pass drafts |
+| `ESCALATION_MODEL` | No | `accounts/fireworks/models/deepseek-v4-pro` | Premium model used when confidence is low |
+| `JUDGE_MODEL` | No | `accounts/fireworks/models/glm-5p1` | Model that scores draft quality (0.0–1.0) |
 | `ESCALATION_THRESHOLD` | No | `0.7` | Confidence score below which escalation triggers |
 
 > **No API key?** The backend runs in **mock mode** — all responses are prefixed with `[Mock]` and no real API calls are made. Great for local UI development.
 
 ---
 
-## 📦 The Pack System
+## 🧩 The Pack System
 
 A **Pack** is a YAML manifest that fully defines a clerk agent's identity, behaviour, and compliance boundaries.
 
-### Pack Schema
+<details>
+<summary>📄 Pack schema</summary>
 
 ```yaml
 name: Clinic Front-Desk Clerk     # Required. Used as the pack ID (lowercased, underscored)
@@ -218,6 +243,8 @@ tools:                            # Tool grants for this clerk
   - ocr
 ```
 
+</details>
+
 ### Built-in Packs (18 included)
 
 | Pack | Domain |
@@ -241,19 +268,21 @@ tools:                            # Tool grants for this clerk
 | `Grant & Tender Writer's Aide` | Grant writing assistance |
 | `Fine-Tune Concierge` | LLM fine-tuning guidance |
 
+**To add a custom pack:**
+
+1. Create a new `.yaml` file in `backend/packs/` following the schema above
+2. *(Optional)* Add a `backend/packs/<pack_name>_corpus.txt` file with domain knowledge for RAG
+3. Restart the backend, or call `POST /api/packs/reload` to hot-reload without downtime
+4. The new clerk appears immediately in the Catalog and Console pack selector
+
 ---
 
-## 🔌 REST API Reference
+## 📡 API Reference
 
 All endpoints are served at `http://localhost:8000`.
 
-### Health
-
-```
-GET /api/health
-```
-
-Returns service status, Fireworks AI configuration state, and number of loaded packs.
+### `GET /api/health`
+Health check. Returns service status, Fireworks AI configuration state, and number of loaded packs.
 
 ---
 
@@ -271,12 +300,11 @@ Returns service status, Fireworks AI configuration state, and number of loaded p
 
 ---
 
-### Chat
+### `POST /api/chat`
+Send a message to a clerk.
 
-```
-POST /api/chat
-Content-Type: application/json
-
+**Request**
+```json
 {
   "pack_id": "clinic_front-desk_clerk",
   "session_id": "optional-uuid-to-continue-a-session",
@@ -284,7 +312,7 @@ Content-Type: application/json
 }
 ```
 
-**Response:**
+**Response `200`**
 ```json
 {
   "session_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -319,7 +347,7 @@ Content-Type: application/json
 
 ---
 
-## 🧠 Request Pipeline (Deep Dive)
+## 🧠 Request Pipeline
 
 Every message sent to `/api/chat` passes through this deterministic pipeline inside `SessionManager.process_request()`:
 
@@ -327,42 +355,42 @@ Every message sent to `/api/chat` passes through this deterministic pipeline ins
 User Message
     │
     ▼
-[Step 0]  Tool Detection
-          Keyword-matches the message against pack-granted tools.
-          If matched → calls ToolsRegistry to execute (OCR / Vision / Media)
+[Step 0]    Tool Detection
+            Keyword-matches the message against pack-granted tools.
+            If matched → calls ToolsRegistry to execute (OCR / Vision / Media)
     │
     ▼
-[Step 0.5] Knowledge Retrieval
-           TF-IDF cosine similarity search over the pack's corpus .txt file.
-           Top-2 relevant passages injected into the prompt context.
+[Step 0.5]  Knowledge Retrieval
+            TF-IDF cosine similarity search over the pack's corpus .txt file.
+            Top-2 relevant passages injected into the prompt context.
     │
     ▼
-[Step 1]  Local Draft
-          Sends the enriched prompt + system prompt (persona + rules + policy)
-          to the cheap LOCAL_MODEL via Fireworks AI.
+[Step 1]    Local Draft
+            Sends the enriched prompt + system prompt (persona + rules + policy)
+            to the cheap LOCAL_MODEL via Fireworks AI.
     │
     ▼
-[Step 2]  Confidence Gate
-          JUDGE_MODEL scores the draft (0.0 – 1.0).
-          Score ≥ ESCALATION_THRESHOLD (0.7) → use the local draft.
-          Score < threshold → re-run with expensive ESCALATION_MODEL.
+[Step 2]    Confidence Gate
+            JUDGE_MODEL scores the draft (0.0–1.0).
+            Score ≥ ESCALATION_THRESHOLD (0.7) → use the local draft.
+            Score <  threshold → re-run with expensive ESCALATION_MODEL.
     │
     ▼
-[Step 3]  Rules Validation
-          Post-generation check for forbidden topics → refuses with explanation.
-          Applies PII redaction patterns (credit cards, SSNs, phones, addresses).
+[Step 3]    Rules Validation
+            Post-generation check for forbidden topics → refuses with explanation.
+            Applies PII redaction patterns (credit cards, SSNs, phones, addresses).
     │
     ▼
-[Step 4]  Persona Rendering
-          Strips trailing whitespace; persona voice was already enforced in Step 1.
+[Step 4]    Persona Rendering
+            Strips trailing whitespace; persona voice was already enforced in Step 1.
     │
     ▼
-[Step 5]  Session History Update
-          Appends {user, assistant} turn to in-memory session.
+[Step 5]    Session History Update
+            Appends {user, assistant} turn to in-memory session.
     │
     ▼
-[Step 6]  Ledger Logging
-          Writes verdict, token counts, escalation flag to JSONL ledger.
+[Step 6]    Ledger Logging
+            Writes verdict, token counts, escalation flag to JSONL ledger.
     │
     ▼
 Response to Frontend
@@ -382,12 +410,61 @@ Defined per-pack in `escalation_policy.forbidden`. Built-in categories:
 ### PII Redaction
 Defined per-pack in `escalation_policy.redact_first`. Built-in categories:
 - `financial_data` — credit card & account numbers
-- `tax_ids` — Tax IDs and SSN formats
+- `tax_ids` — tax IDs and SSN formats
 - `phone_numbers` — international phone number formats
 - `addresses` — street addresses
 
-### Sovereign Mode (UI)
-The Sovereign Switch in the sidebar disables all external API calls. The backend falls back to mock responses, ensuring **zero data egress** — critical for PDPA and similar data-residency regulations.
+### Sovereign Mode
+The Sovereign Switch in the sidebar disables all external API calls. The backend falls back to mock responses, ensuring zero data egress — relevant for PDPA and similar data-residency regulations.
+
+---
+
+## 📁 File Structure
+
+```
+GuildHouse/
+│
+├── backend/
+│   ├── main.py                 # FastAPI app & all REST endpoints
+│   ├── requirements.txt        # Python dependencies
+│   ├── Dockerfile
+│   ├── engine/
+│   │   ├── config.py           # API keys, model names, thresholds
+│   │   ├── session.py          # SessionManager — orchestrates the full pipeline
+│   │   ├── inference.py        # LocalEngine — cheap-model draft generation
+│   │   ├── gateway.py          # EscalationGateway — confidence gate & escalation
+│   │   ├── rules.py            # RulesEngine — forbidden topic & PII redaction
+│   │   ├── persona.py          # PersonaEngine — final output rendering
+│   │   ├── retrieval.py        # RetrievalEngine — TF-IDF knowledge retrieval
+│   │   ├── tools.py            # ToolsRegistry — OCR, Vision, Media Pipeline
+│   │   ├── loader.py           # PackLoader — YAML pack registry
+│   │   └── ledger.py           # Ledger — JSONL audit trail
+│   ├── packs/
+│   │   ├── *.yaml              # Clerk pack manifests (18 built-in packs)
+│   │   └── *_corpus.txt        # Per-pack knowledge corpora for RAG
+│   └── data/
+│       └── ledger.jsonl        # Runtime audit log (auto-created)
+│
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx             # Root component, routing, tour
+│   │   ├── components/
+│   │   │   └── Sidebar.jsx     # Navigation, Sovereign Mode toggle
+│   │   └── views/
+│   │       ├── Console.jsx     # Live chat interface with pack selector
+│   │       ├── Inspector.jsx   # Pipeline metadata & audit ledger viewer
+│   │       ├── Catalog.jsx     # Browse & filter all installed packs
+│   │       ├── PackStudio.jsx  # Live YAML editor with hot-reload
+│   │       └── Landing.jsx     # Entry splash page
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── tailwind.config.js
+│   └── Dockerfile
+│
+├── docker-compose.yml          # Full-stack orchestration (+ vLLM ROCm)
+├── .env.example                # Environment variable template
+└── extract.py                  # Utility script for text corpus extraction
+```
 
 ---
 
@@ -403,53 +480,77 @@ The Sovereign Switch in the sidebar disables all external API calls. The backend
 
 ---
 
-## 🔧 Adding a Custom Pack
+## 🛠️ Troubleshooting
 
-1. Create a new `.yaml` file in `backend/packs/` following the schema above.
-2. *(Optional)* Create a `backend/packs/<pack_name>_corpus.txt` file with domain knowledge for RAG.
-3. Either restart the backend, or call `POST /api/packs/reload` to hot-reload without downtime.
-4. The new clerk appears immediately in the Catalog and Console pack selector.
+<details>
+<summary>❌ Backend won't start — missing Fireworks key</summary>
 
----
-
-## 🧪 Testing
+The backend runs in mock mode without a key, but real inference requires one:
 
 ```bash
-# Backend pipeline test
-cd backend
-python test_pipeline.py
-
-# Frontend linting
-cd frontend
-npm run lint
+cp .env.example .env
+# Add FIREWORKS_API_KEY=your_key_here
 ```
 
----
+Restart with `python -m uvicorn main:app --reload`.
 
-## 📋 Tech Stack
+</details>
 
-| Layer | Technology |
-|---|---|
-| **Backend** | Python, FastAPI, Uvicorn |
-| **Frontend** | React 19, Vite 8, Tailwind CSS 3 |
-| **AI Inference** | Fireworks AI API (OpenAI-compatible) |
-| **Local GPU** | AMD ROCm + vLLM (optional) |
-| **Knowledge Retrieval** | scikit-learn TF-IDF |
-| **Containerisation** | Docker, Docker Compose |
-| **Pack Format** | YAML |
-| **Audit Log** | JSONL (newline-delimited JSON) |
+<details>
+<summary>❌ CORS errors in the browser</summary>
+
+Make sure:
+- The FastAPI backend is running on port 8000 (`python -m uvicorn main:app --reload`)
+- The Vite dev server is running (`npm run dev`)
+- No firewall or proxy is blocking `localhost:8000`
+
+</details>
+
+<details>
+<summary>❌ Pack fails to load / doesn't appear in Catalog</summary>
+
+1. Check the YAML is valid — indentation errors are the most common cause
+2. Call `POST /api/packs/reload` and inspect the response for a validation error
+3. Confirm the pack file lives directly under `backend/packs/` with a `.yaml` extension
+
+</details>
+
+<details>
+<summary>❌ vLLM / ROCm service fails in Docker Compose</summary>
+
+The `vllm-rocm` service requires AMD GPU hardware (`/dev/kfd`, `/dev/dri`) passed through to the container. On CPU-only or non-AMD hosts, comment out that service block in `docker-compose.yml` and rely on the Fireworks AI cloud path instead.
+
+</details>
+
+<details>
+<summary>❌ Escalation never triggers / always triggers</summary>
+
+Check `ESCALATION_THRESHOLD` in your `.env`. A higher value (closer to `1.0`) makes escalation more frequent; a lower value keeps more traffic on the cheap `LOCAL_MODEL`. Also confirm `JUDGE_MODEL` is returning scores in the `Inspector` view for each session.
+
+</details>
 
 ---
 
 ## 🤝 Contributing
 
-1. Fork the repository.
-2. Create a feature branch: `git checkout -b feat/my-new-pack`
-3. Add your pack YAML to `backend/packs/`.
-4. Open a pull request with a description of the clerk's use-case and compliance boundaries.
+1. Fork the repository
+2. Create a feature branch
+   ```bash
+   git checkout -b feat/my-new-pack
+   ```
+3. Add your pack YAML to `backend/packs/`
+4. Commit your changes
+   ```bash
+   git commit -m "feat: add my-new-pack clerk"
+   ```
+5. Push to your fork and open a Pull Request describing the clerk's use case and compliance boundaries
 
 ---
 
-## 📄 License
+<div align="center">
 
-This project was built for the **AMD Developer Hackathon: ACT II AI Hackathon** on lablab.ai. See the repository for license details.
+Built with ❤️ for the **AMD Developer Hackathon: ACT II** on lablab.ai
+
+*YAML Packs · Confidence-Gated Escalation · Audit Ledger · Sovereign Mode*
+
+</div>
