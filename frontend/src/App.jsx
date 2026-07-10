@@ -45,12 +45,12 @@ export default function App() {
     2: {
       title: "💬 Live Clerk Console",
       text: "Select a capability pack in the dropdown and converse with the clerk. You can click 'Simulate File' below to test local Vision/OCR tool pipelines (like receipts and video processing).",
-      pos: "bottom-32 right-12"
+      pos: "bottom-4 left-1/2 -translate-x-1/2 md:bottom-32 md:right-12 md:left-auto md:translate-x-0"
     },
     3: {
       title: "🔒 Strict Sovereign Switch",
       text: "Toggle the Sovereign Switch in the sidebar card to cut off external APIs completely. Sending a complex prompt with Sovereign Mode active forces a secure local fallback, preventing unredacted data leaks under PDPA.",
-      pos: "bottom-12 left-72"
+      pos: "bottom-4 left-1/2 -translate-x-1/2 md:bottom-12 md:left-72 md:translate-x-0"
     },
     4: {
       title: "📖 Audit Ledger & compliance",
@@ -121,7 +121,7 @@ export default function App() {
         <div className="fixed inset-0 z-50 pointer-events-none">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] pointer-events-auto" onClick={() => setShowTour(false)} />
           
-          <div className={`absolute p-6 rounded-2xl bg-[#161b22] border-2 border-[#58a6ff]/40 text-[#c9d1d9] shadow-2xl max-w-sm w-full pointer-events-auto animate-slideUp ${tourSteps[tourStep].pos}`}>
+          <div className={`absolute p-6 rounded-2xl bg-[#161b22] border-2 border-[#58a6ff]/40 text-[#c9d1d9] shadow-2xl max-w-[90%] sm:max-w-sm w-full pointer-events-auto animate-slideUp ${tourSteps[tourStep].pos}`}>
             <div className="flex justify-between items-start mb-2">
               <h4 className="text-sm font-bold text-white flex items-center gap-2">
                 <span>{tourSteps[tourStep].title}</span>
