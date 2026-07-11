@@ -320,19 +320,19 @@ tools: ${JSON.stringify(formTools)}
     <div className="flex-1 flex flex-col h-screen bg-[#0d1117] text-[#c9d1d9] overflow-hidden">
       {/* Header */}
       <div className="p-8 border-b border-[#30363d] bg-[#161b22] shrink-0">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-white mb-1">Capability Catalog</h1>
             <p className="text-xs text-[#8b949e]">Declarative domain packs ready for sovereign deployment.</p>
           </div>
           
-          <div className="flex gap-4 items-center">
+          <div className="flex gap-3 sm:gap-4 items-center">
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search packs..."
-              className="bg-[#0d1117] border border-[#30363d] rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-[#58a6ff] w-64"
+              className="bg-[#0d1117] border border-[#30363d] rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-[#58a6ff] flex-1 min-w-0 lg:flex-none lg:w-64"
             />
             <button
               onClick={() => setShowWizard(true)}

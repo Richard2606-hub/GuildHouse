@@ -553,19 +553,19 @@ export default function Console() {
           )}
 
           {/* Prompt Entry */}
-          <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="flex gap-4">
+          <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="flex gap-2 sm:gap-4">
             <input
               type="text"
               value={input}
-              
+
               onChange={(e) => setInput(e.target.value)}
               placeholder="Speak with the clerk or query system state..."
-              className="flex-1 bg-[#0d1117] border border-[#30363d] rounded-xl px-6 py-4 text-white placeholder-[#8b949e] focus:outline-none focus:border-[#58a6ff] focus:ring-1 focus:ring-[#58a6ff] transition-all text-sm disabled:opacity-50"
+              className="flex-1 min-w-0 bg-[#0d1117] border border-[#30363d] rounded-xl px-4 sm:px-6 py-4 text-white placeholder-[#8b949e] focus:outline-none focus:border-[#58a6ff] focus:ring-1 focus:ring-[#58a6ff] transition-all text-sm disabled:opacity-50"
             />
-            <button 
+            <button
               type="submit"
               disabled={loading || !input.trim()}
-              className="bg-[#238636] hover:bg-[#2ea043] text-white px-8 py-4 rounded-xl font-bold transition-colors disabled:opacity-50 text-sm shrink-0"
+              className="bg-[#238636] hover:bg-[#2ea043] text-white px-5 sm:px-8 py-4 rounded-xl font-bold transition-colors disabled:opacity-50 text-sm shrink-0"
             >
               Send Message
             </button>

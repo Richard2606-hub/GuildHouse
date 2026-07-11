@@ -113,10 +113,10 @@ export default function Inspector() {
       </div>
 
       {/* Internal Tabs */}
-      <div className="flex border-b border-[#30363d] bg-[#161b22]/50 shrink-0">
+      <div className="flex border-b border-[#30363d] bg-[#161b22]/50 shrink-0 overflow-x-auto">
         <button
           onClick={() => setActiveTab('timeline')}
-          className={`px-8 py-3 text-sm font-semibold transition-all border-r border-[#30363d] ${
+          className={`px-4 sm:px-8 py-3 text-xs sm:text-sm font-semibold transition-all border-r border-[#30363d] whitespace-nowrap shrink-0 ${
             activeTab === 'timeline' ? 'bg-[#0d1117] text-[#58a6ff]' : 'text-[#8b949e] hover:text-white'
           }`}
         >
@@ -124,7 +124,7 @@ export default function Inspector() {
         </button>
         <button
           onClick={() => setActiveTab('compliance')}
-          className={`px-8 py-3 text-sm font-semibold transition-all border-r border-[#30363d] ${
+          className={`px-4 sm:px-8 py-3 text-xs sm:text-sm font-semibold transition-all border-r border-[#30363d] whitespace-nowrap shrink-0 ${
             activeTab === 'compliance' ? 'bg-[#0d1117] text-[#58a6ff]' : 'text-[#8b949e] hover:text-white'
           }`}
         >
@@ -132,7 +132,7 @@ export default function Inspector() {
         </button>
         <button
           onClick={() => setActiveTab('metrics')}
-          className={`px-8 py-3 text-sm font-semibold transition-all border-r border-[#30363d] ${
+          className={`px-4 sm:px-8 py-3 text-xs sm:text-sm font-semibold transition-all border-r border-[#30363d] whitespace-nowrap shrink-0 ${
             activeTab === 'metrics' ? 'bg-[#0d1117] text-[#58a6ff]' : 'text-[#8b949e] hover:text-white'
           }`}
         >
