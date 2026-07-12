@@ -56,13 +56,35 @@ class RulesEngine:
         violations = []
 
         for topic in forbidden:
-            patterns = self.FORBIDDEN_PATTERNS.get(topic, [])
+            patterns = self.FORBIDDEN_PATTERNS.get(topic)
+
+            if patterns is None:
+                # No predefined patterns for this topic — fall back to a loose
+                # keyword match on the topic name itself, so it's never silently ignored.
+                fallback_keyword = topic.replace("_", " ")
+                pattern = r"\b" + re.escape(fallback_keyword) + r"\b"
+                if re.search(pattern, draft, re.IGNORECASE):
+                    violations.append(topic)
+                continue
+
             for pattern in patterns:
                 if re.search(pattern, draft, re.IGNORECASE):
                     violations.append(topic)
                     break
 
         return violations
+
+    def refusal_message(self, pack: Dict[str, Any], violations: List[str]) -> str:
+        """Build the standard refusal message for forbidden topic violations.
+        Shared by both the pre-flight (input) check and the post-generation
+        (output) check, so the wording stays consistent either way."""
+        clerk_name = pack.get("name", "Clerk")
+        return (
+            f"I'm sorry, but as {clerk_name}, I'm not able to provide information on "
+            f"{', '.join(violations).replace('_', ' ')}. "
+            f"This falls outside my authorized scope. "
+            f"Please consult the appropriate professional for this matter."
+        )
 
     def apply_redactions(self, draft: str, pack: Dict[str, Any]) -> str:
         """Redact sensitive data patterns specified in the pack's escalation policy."""
@@ -89,13 +111,7 @@ class RulesEngine:
         # 1. Forbidden topic check
         violations = self.check_forbidden_topics(draft, pack)
         if violations:
-            clerk_name = pack.get("name", "Clerk")
-            return (
-                f"I'm sorry, but as {clerk_name}, I'm not able to provide information on "
-                f"{', '.join(violations).replace('_', ' ')}. "
-                f"This falls outside my authorized scope. "
-                f"Please consult the appropriate professional for this matter."
-            )
+            return self.refusal_message(pack, violations)
 
         # 2. Redaction pass
         draft = self.apply_redactions(draft, pack)

@@ -46,13 +46,13 @@ class SessionManager:
         """
         The complete GuildHouse pipeline:
 
-        1. Load pack context
-        2. Detect tool intent, execute if needed
-        3. Local Draft (cheap model via Fireworks AI)
-        4. Confidence Gate -> Escalate if needed (expensive model)
-        5. Rules Validation (forbidden topics, redaction)
-        6. Persona Rendering
-        7. Log everything to the Ledger
+        -1. Pre-flight forbidden topic check (short-circuit, zero cost)
+        0. Load pack context, detect tool intent, execute if needed
+        1. Local Draft (cheap model via Fireworks AI)
+        2. Confidence Gate -> Escalate if needed (expensive model)
+        3. Rules Validation (forbidden topics, redaction)
+        4. Persona Rendering
+        5. Log everything to the Ledger
         """
         session_data = self.sessions.get(session_id)
         if not session_data:
@@ -64,6 +64,35 @@ class SessionManager:
             return {"text": "Error: Pack not loaded.", "metadata": {}}
 
         history = session_data.get("history", [])
+
+        # --- Step -1: Pre-flight forbidden topic check (on raw user input) ---
+        # Catches disallowed requests before any model call is made, so we
+        # never pay for a local draft (or worse, an escalation) on a prompt
+        # that was always going to be refused.
+        input_violations = rules_engine.check_forbidden_topics(prompt, pack)
+        if input_violations:
+            refusal_text = rules_engine.refusal_message(pack, input_violations)
+            house_ledger.log_early_refusal(session_id, input_violations)
+
+            session_data["history"].append({
+                "user": prompt,
+                "assistant": refusal_text,
+            })
+
+            metadata = {
+                "pack_name": pack.get("name", "Unknown"),
+                "local_tokens": 0,
+                "escalated": False,
+                "confidence": None,
+                "escalation_tokens": 0,
+                "total_tokens": 0,
+                "rules_applied": len(pack.get("rules", [])),
+                "tool_used": "",
+                "persona": persona_engine.get_persona_metadata(pack),
+                "early_refusal": True,
+                "violations": input_violations,
+            }
+            return {"text": refusal_text, "metadata": metadata}
 
         # Log the incoming request
         house_ledger.log_request(session_id, prompt)
@@ -133,6 +162,7 @@ class SessionManager:
             "rules_applied": len(pack.get("rules", [])),
             "tool_used": tool_used,
             "persona": persona_engine.get_persona_metadata(pack),
+            "early_refusal": False,
         }
 
         return {"text": rendered_answer, "metadata": metadata}
