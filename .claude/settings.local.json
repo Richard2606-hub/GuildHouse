@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(pip install *)",
+      "Bash(python3 -m pip show pypdf)",
+      "Bash(python3 -m pip install pypdf -q)",
+      "Skill(artifact-design)",
+      "Skill(artifact-design:*)",
+      "Skill(dataviz)",
+      "Skill(dataviz:*)",
+      "Bash(node \"C:\\\\Users\\\\asus\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\bundled-skills\\\\2.1.202\\\\5cea67eda976ab8b0c4c8e0214715630\\\\dataviz\\\\scripts\\\\validate_palette.js\" \"#00F5D4,#FFB703,#FF4D4D,#A155FF\" --mode dark --surface \"#111522\")",
+      "PowerShell(Remove-Item -Force \"C:\\\\Users\\\\asus\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-asus-Downloads-GuildHouse\\\\6a23c325-8fca-4b10-94c8-74d305f264f9\\\\scratchpad\\\\guildhouse-console.html\" -Confirm:$false)",
+      "PowerShell(Stop-Process -Id 23360 -Force -Confirm:$false)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Id 32840 -Force -Confirm:$false)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress, OwningProcess; Get-Process -Id \\(Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess -ErrorAction SilentlyContinue | Select-Object Id, ProcessName)",
+      "PowerShell(try { Stop-Process -Id 23360 -Force -Confirm:$false -ErrorAction Stop; \"killed\" } catch { \"err: $_\" }; Start-Sleep -Milliseconds 800; $c = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue; if \\($null -eq $c\\) { \"port 8000 free\" } else { \"still held by PID $\\($c.OwningProcess\\)\"; Get-Process | Where-Object { $_.ProcessName -match 'python|uvicorn' } | Select-Object Id, ProcessName })",
+      "PowerShell(Stop-Process -Id 15100,38936 -Force -Confirm:$false -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 800; $c = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue; if \\($null -eq $c\\) { \"port 8000 free\" } else { \"still held by PID $\\($c.OwningProcess\\)\" })",
+      "PowerShell(foreach \\($p in 8000,5173\\) { $c = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { try { Stop-Process -Id $_ -Force -ErrorAction Stop } catch {} } } }; Start-Sleep -Milliseconds 700; foreach \\($p in 8000,5173\\) { $c = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { \"port $p still held\" } else { \"port $p free\" } })",
+      "PowerShell(foreach \\($p in 8000,5173\\) { $c = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { try { Stop-Process -Id $_ -Force -ErrorAction Stop } catch {} } } }; Start-Sleep -Milliseconds 600; \"cleaned\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
+    ]
+  }
+}
