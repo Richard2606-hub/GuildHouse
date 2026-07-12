@@ -19,7 +19,7 @@
 
 <br/>
 
-> YAML Packs · Confidence-Gated Escalation · Audit Ledger · Sovereign Mode · 18 Built-in Clerks
+> YAML Packs · Confidence-Gated Escalation · Audit Ledger · Sovereign Mode · 19 Built-in Clerks
 
 </div>
 
@@ -60,6 +60,7 @@
 | 🧰 Tool System | Pack-gated OCR / vision / media tools, LLM-simulated as fallback |
 | 📜 Audit Ledger | Every request, escalation, and tool call logged to JSONL |
 | 🔒 Sovereign Mode | One toggle cuts all external calls, forcing local-only inference |
+| 🖥️ SPA Serving | Backend can serve the production-built frontend from `/frontend/dist` |
 
 ---
 
@@ -68,11 +69,15 @@
 ```
 ┌───────────────────────────────────────────────────────────────┐
 │                    React Frontend (Vite)                      │
-│  Console · Inspector · Catalog · Pack Studio · Landing        │
+│  Landing · Console · Inspector · Catalog · Studio             │
+│                                                               │
+│  Dev: Vite dev server (port 5173) with /api proxy →           │
+│       http://127.0.0.1:8000                                   │
+│  Prod: Served directly by FastAPI from /frontend/dist         │
 └────────────────────────┬──────────────────────────────────────┘
                           │  HTTP / REST
 ┌────────────────────────▼──────────────────────────────────────┐
-│                     FastAPI Backend                           │
+│                     FastAPI Backend (port 8000)               │
 │                                                               │
 │  ┌─────────────┐   ┌──────────────┐   ┌──────────────────┐    │
 │  │ Pack Loader │   │ Session Mgr  │   │   Audit Ledger   │    │
@@ -115,11 +120,12 @@
 ## ✨ Features
 
 ### 🎨 Frontend
-- **Console** — live chat UI with pack selector and message history
-- **Inspector** — full pipeline trace: tokens, confidence, escalation flag, persona
-- **Catalog** — browsable, filterable grid of all installed packs
-- **Pack Studio** — YAML editor with syntax highlighting and one-click hot-reload
-- **Sovereign toggle** — sidebar switch to force local-only inference
+- **Landing** — splash page and entry point to the dashboard
+- **Console** — live chat UI with pack selector, message history, and file simulation for tool testing
+- **Inspector** — full pipeline trace: tokens, confidence, escalation flag, persona info, and the full audit ledger
+- **Catalog** — browsable, filterable card grid of all installed packs
+- **Studio** — full YAML editor with syntax highlighting, pack creation, and one-click hot-reload
+- **Sovereign toggle** — sidebar switch to force local-only inference (zero data egress)
 
 ### ⚙️ Backend
 - **Confidence-gated escalation** — cheap model drafts, judge model scores, premium model only steps in below threshold
@@ -127,6 +133,7 @@
 - **Hot-reload** — edit a pack, call reload, the clerk's behaviour changes with zero downtime
 - **Per-pack knowledge retrieval** — TF-IDF search over a pack's own corpus, no external vector database
 - **Structured audit trail** — every escalation, redaction, and tool call written to an append-only JSONL ledger
+- **SPA fallback** — when the frontend is built (`npm run build`), the FastAPI server serves it as a static single-page app at the root path
 
 ---
 
@@ -174,6 +181,8 @@ npm install
 npm run dev
 # Frontend live at http://localhost:5173
 ```
+
+> **Dev proxy**: The Vite dev server automatically proxies all `/api/*` requests to `http://127.0.0.1:8000`, so the frontend and backend can run independently without CORS issues in development.
 
 ---
 
@@ -246,7 +255,7 @@ tools:                            # Tool grants for this clerk
 
 </details>
 
-### Built-in Packs (18 included)
+### Built-in Packs (19 included)
 
 | Pack | Domain |
 |---|---|
@@ -268,6 +277,7 @@ tools:                            # Tool grants for this clerk
 | `Edge Retail Shelf Clerk` | Retail inventory & shelf management |
 | `Grant & Tender Writer's Aide` | Grant writing assistance |
 | `Fine-Tune Concierge` | LLM fine-tuning guidance |
+| `Chain-to-Human Explainer` | Human escalation & handoff explainer |
 
 **To add a custom pack:**
 
@@ -285,6 +295,16 @@ All endpoints are served at `http://localhost:8000`.
 ### `GET /api/health`
 Health check. Returns service status, Fireworks AI configuration state, and number of loaded packs.
 
+**Response**
+```json
+{
+  "status": "healthy",
+  "service": "GuildHouse Core",
+  "fireworks_configured": true,
+  "packs_loaded": 19
+}
+```
+
 ---
 
 ### Packs
@@ -298,6 +318,8 @@ Health check. Returns service status, Fireworks AI configuration state, and numb
 | `PUT` | `/api/packs/{pack_id}` | Update and hot-reload an existing pack |
 | `DELETE` | `/api/packs/{pack_id}` | Delete a pack |
 | `POST` | `/api/packs/reload` | Force reload all packs from disk |
+| `GET` | `/api/packs/{pack_name}` | Get raw YAML file content by filename (Studio) |
+| `POST` | `/api/packs/{pack_name}` | Save YAML content by filename and hot-reload (Studio) |
 
 ---
 
@@ -429,6 +451,9 @@ GuildHouse/
 │   ├── main.py                 # FastAPI app & all REST endpoints
 │   ├── requirements.txt        # Python dependencies
 │   ├── Dockerfile
+│   ├── generate_packs.py       # Utility: scaffold new pack YAML files
+│   ├── verify_packs.py         # Utility: validate all pack YAML files
+│   ├── test_pipeline.py        # Integration tests for the chat pipeline
 │   ├── engine/
 │   │   ├── config.py           # API keys, model names, thresholds
 │   │   ├── session.py          # SessionManager — orchestrates the full pipeline
@@ -441,7 +466,7 @@ GuildHouse/
 │   │   ├── loader.py           # PackLoader — YAML pack registry
 │   │   └── ledger.py           # Ledger — JSONL audit trail
 │   ├── packs/
-│   │   ├── *.yaml              # Clerk pack manifests (18 built-in packs)
+│   │   ├── *.yaml              # Clerk pack manifests (19 built-in packs)
 │   │   └── *_corpus.txt        # Per-pack knowledge corpora for RAG
 │   └── data/
 │       └── ledger.jsonl        # Runtime audit log (auto-created)
@@ -452,32 +477,34 @@ GuildHouse/
 │   │   ├── components/
 │   │   │   └── Sidebar.jsx     # Navigation, Sovereign Mode toggle
 │   │   └── views/
+│   │       ├── Landing.jsx     # Entry splash page
 │   │       ├── Console.jsx     # Live chat interface with pack selector
 │   │       ├── Inspector.jsx   # Pipeline metadata & audit ledger viewer
 │   │       ├── Catalog.jsx     # Browse & filter all installed packs
-│   │       ├── PackStudio.jsx  # Live YAML editor with hot-reload
-│   │       └── Landing.jsx     # Entry splash page
+│   │       ├── PackStudio.jsx  # YAML editor (legacy view)
+│   │       └── Studio.jsx      # Full YAML editor with pack creation & hot-reload
 │   ├── package.json
-│   ├── vite.config.js
+│   ├── vite.config.js          # Dev server with /api proxy to backend
 │   ├── tailwind.config.js
 │   └── Dockerfile
 │
 ├── docker-compose.yml          # Full-stack orchestration (+ vLLM ROCm)
 ├── .env.example                # Environment variable template
-└── extract.py                  # Utility script for text corpus extraction
+├── extract.py                  # Utility: extract text from files for corpus generation
+└── extracted_text.txt          # Output from extract.py (used to build corpus files)
 ```
 
 ---
 
 ## 🖥️ Frontend Views
 
-| View | Description |
-|---|---|
-| **Landing** | Splash page with entry point to the dashboard |
-| **Console** | Live chat UI with pack selector, message history, and file simulation for tool testing |
-| **Inspector** | Displays pipeline metadata (tokens, confidence, escalation flag, persona info) and the full audit ledger |
-| **Catalog** | Browsable card grid of all installed packs with search and filter |
-| **Pack Studio** | Full YAML editor with syntax highlighting and one-click hot-reload |
+| View | Route | Description |
+|---|---|---|
+| **Landing** | `/` | Splash page with entry point to the dashboard |
+| **Console** | `/console` | Live chat UI with pack selector, message history, and file simulation for tool testing |
+| **Inspector** | `/inspector` | Displays pipeline metadata (tokens, confidence, escalation flag, persona info) and the full audit ledger |
+| **Catalog** | `/catalog` | Browsable card grid of all installed packs with search and filter |
+| **Studio** | `/studio` | Full YAML editor with syntax highlighting, pack creation/deletion, and one-click hot-reload |
 
 ---
 
@@ -500,10 +527,22 @@ Restart with `python -m uvicorn main:app --reload`.
 <details>
 <summary>❌ CORS errors in the browser</summary>
 
+The backend only allows CORS from `http://localhost:5173` and `http://127.0.0.1:5173`.
 Make sure:
 - The FastAPI backend is running on port 8000 (`python -m uvicorn main:app --reload`)
-- The Vite dev server is running (`npm run dev`)
+- The Vite dev server is running on port 5173 (`npm run dev`)
 - No firewall or proxy is blocking `localhost:8000`
+
+If you need to run the frontend on a different port, update the `allow_origins` list in [`backend/main.py`](backend/main.py).
+
+</details>
+
+<details>
+<summary>❌ Frontend can't reach the API</summary>
+
+In development, the Vite dev server proxies `/api/*` to `http://127.0.0.1:8000` (configured in [`frontend/vite.config.js`](frontend/vite.config.js)). This means the frontend never calls `localhost:8000` directly — just use relative `/api/...` paths in your code.
+
+If you're not using the dev server (e.g. opening `index.html` directly), you must run `npm run build` first and let the FastAPI backend serve the compiled SPA.
 
 </details>
 
@@ -513,6 +552,7 @@ Make sure:
 1. Check the YAML is valid — indentation errors are the most common cause
 2. Call `POST /api/packs/reload` and inspect the response for a validation error
 3. Confirm the pack file lives directly under `backend/packs/` with a `.yaml` extension
+4. Run `python verify_packs.py` from the `backend/` directory to batch-validate all packs
 
 </details>
 
@@ -526,7 +566,7 @@ The `vllm-rocm` service requires AMD GPU hardware (`/dev/kfd`, `/dev/dri`) passe
 <details>
 <summary>❌ Escalation never triggers / always triggers</summary>
 
-Check `ESCALATION_THRESHOLD` in your `.env`. A higher value (closer to `1.0`) makes escalation more frequent; a lower value keeps more traffic on the cheap `LOCAL_MODEL`. Also confirm `JUDGE_MODEL` is returning scores in the `Inspector` view for each session.
+Check `ESCALATION_THRESHOLD` in your `.env`. A higher value (closer to `1.0`) makes escalation more frequent; a lower value keeps more traffic on the cheap `LOCAL_MODEL`. Also confirm `JUDGE_MODEL` is returning scores in the **Inspector** view for each session.
 
 </details>
 
