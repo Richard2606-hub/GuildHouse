@@ -12,6 +12,19 @@ from .retrieval import retrieval_engine
 
 
 class SessionManager:
+    """
+    Hackathon Main Code Path: SessionManager
+    
+    This class orchestrates the entire GuildHouse pipeline. It is entirely original work
+    built for the AMD Developer Hackathon: ACT II.
+    
+    It handles:
+    1. Tool detection & execution
+    2. Knowledge Retrieval (Semantic Search RAG)
+    3. Drafting responses via the Local Tier (gemma2-9b-it via Fireworks AI / AMD compute)
+    4. Confidence Gate & Escalation (routes to Gemini Pro if confidence is low)
+    5. Rules Validation & Persona Rendering
+    """
     def __init__(self):
         self.sessions: Dict[str, Dict[str, Any]] = {}
 

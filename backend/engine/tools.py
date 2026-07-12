@@ -1,18 +1,21 @@
 import httpx
 from typing import Dict, Any
+from google import genai
+from google.genai import types
 
 from .config import (
+    GEMINI_API_KEY,
     FIREWORKS_API_KEY,
     FIREWORKS_BASE_URL,
+    TOOL_PROVIDER,
     LOCAL_MODEL,
 )
-
 
 class ToolsRegistry:
     """
     GuildHouse Tool System — provides specialized capabilities to clerks.
     Tools are granted per-pack via the YAML manifest.
-    Uses the LLM to provide intelligent tool-like responses.
+    Supports routing between Gemini and Fireworks AI based on config.
     """
 
     def __init__(self):
@@ -21,31 +24,45 @@ class ToolsRegistry:
             "vision": "Visual Analysis — identifies objects, text, and patterns in images",
             "media_pipeline": "Media Processing — extracts keyframes, generates transcripts from video/audio",
         }
-        self.client = httpx.AsyncClient(
-            base_url=FIREWORKS_BASE_URL,
-            headers={
-                "Authorization": f"Bearer {FIREWORKS_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            timeout=30.0,
-        )
+        self.provider = TOOL_PROVIDER
+        
+        self.gemini_client = None
+        if GEMINI_API_KEY:
+            self.gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+            
+        self.fireworks_client = None
+        if FIREWORKS_API_KEY:
+            self.fireworks_client = httpx.AsyncClient(
+                base_url=FIREWORKS_BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {FIREWORKS_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                timeout=30.0,
+            )
 
-    async def execute_tool(self, tool_name: str, context: str, pack: Dict[str, Any]) -> str:
-        """Execute a tool if the pack has the grant."""
-        grants = pack.get("tools", [])
-        if tool_name not in grants:
-            return f"[Tool Denied] Clerk does not have grant for '{tool_name}'."
-
-        if tool_name not in self.tool_descriptions:
-            return f"[Tool Error] Tool '{tool_name}' not found."
-
-        if not FIREWORKS_API_KEY:
-            return self._mock_tool(tool_name, context)
-
-        # Use LLM to simulate intelligent tool behavior
-        tool_prompt = self._build_tool_prompt(tool_name, context, pack)
+    async def _execute_gemini(self, tool_name: str, tool_prompt: str) -> str:
+        if not self.gemini_client:
+            return self._mock_tool(tool_name, tool_prompt)
         try:
-            response = await self.client.post(
+            config = types.GenerateContentConfig(
+                max_output_tokens=512,
+                temperature=0.3,
+            )
+            response = await self.gemini_client.aio.models.generate_content(
+                model=LOCAL_MODEL,
+                contents=tool_prompt,
+                config=config,
+            )
+            return response.text if response.text else f"[{tool_name} returned no response]"
+        except Exception as e:
+            return f"[Gemini Tool Error] {tool_name} failed: {str(e)}"
+
+    async def _execute_fireworks(self, tool_name: str, tool_prompt: str) -> str:
+        if not self.fireworks_client:
+            return self._mock_tool(tool_name, tool_prompt)
+        try:
+            response = await self.fireworks_client.post(
                 "/chat/completions",
                 json={
                     "model": LOCAL_MODEL,
@@ -58,10 +75,25 @@ class ToolsRegistry:
             data = response.json()
             return data["choices"][0]["message"]["content"]
         except Exception as e:
-            return f"[Tool Error] {tool_name} failed: {str(e)}"
+            return f"[Fireworks Tool Error] {tool_name} failed: {str(e)}"
+
+    async def execute_tool(self, tool_name: str, context: str, pack: Dict[str, Any]) -> str:
+        """Execute a tool if the pack has the grant."""
+        grants = pack.get("tools", [])
+        if tool_name not in grants:
+            return f"[Tool Denied] Clerk does not have grant for '{tool_name}'."
+
+        if tool_name not in self.tool_descriptions:
+            return f"[Tool Error] Tool '{tool_name}' not found."
+
+        tool_prompt = self._build_tool_prompt(tool_name, context, pack)
+        
+        if self.provider == "gemini":
+            return await self._execute_gemini(tool_name, tool_prompt)
+        else:
+            return await self._execute_fireworks(tool_name, tool_prompt)
 
     def _build_tool_prompt(self, tool_name: str, context: str, pack: Dict[str, Any]) -> str:
-        """Build a prompt that simulates tool behavior."""
         prompts = {
             "ocr": (
                 f"You are an OCR tool for '{pack.get('name', 'Clerk')}'. "
@@ -86,7 +118,6 @@ class ToolsRegistry:
         return prompts.get(tool_name, f"Process this with {tool_name}: {context}")
 
     def _mock_tool(self, tool_name: str, context: str) -> str:
-        """Fallback mock responses when no API key is set."""
         mocks = {
             "ocr": "[OCR Result] Extracted text from document. Fields identified: Date, Amount, Reference Number.",
             "vision": "[Vision Result] Image analysis complete. Objects identified with confidence scores.",
@@ -95,14 +126,12 @@ class ToolsRegistry:
         return mocks.get(tool_name, f"[{tool_name}] Processing complete.")
 
     def get_available_tools(self, pack: Dict[str, Any]) -> list:
-        """Get list of tools available to a pack with descriptions."""
         grants = pack.get("tools", [])
         return [
             {"name": t, "description": self.tool_descriptions.get(t, "")}
             for t in grants
             if t in self.tool_descriptions
         ]
-
 
 # Global instance
 tools_registry = ToolsRegistry()

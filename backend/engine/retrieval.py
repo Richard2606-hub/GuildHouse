@@ -1,36 +1,42 @@
 import os
 from typing import Dict, Any, List
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+
+try:
+    import faiss
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    faiss = None
+    SentenceTransformer = None
 
 class RetrievalEngine:
     """
     GuildHouse Knowledge Retrieval Module.
-    Uses TF-IDF for fast, local, dependency-light exact-term retrieval.
+    Uses semantic search via sentence-transformers and FAISS.
     """
 
     def __init__(self):
-        self.indices = {}  # pack_id -> {"vectorizer": obj, "vectors": array, "chunks": list}
+        self.indices = {}  # pack_id -> {"index": faiss_index, "chunks": list}
         self.pack_dir = os.path.join(os.path.dirname(__file__), "..", "packs")
+        self.embedder = SentenceTransformer('all-MiniLM-L6-v2') if SentenceTransformer else None
 
-    def _chunk_text(self, text: str, chunk_size: int = 500) -> List[str]:
-        """Simple paragraph-based chunking."""
-        paragraphs = text.split('\n\n')
+    def _chunk_text(self, text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
+        """Chunking with overlap."""
         chunks = []
-        current_chunk = ""
-        for p in paragraphs:
-            if len(current_chunk) + len(p) > chunk_size and current_chunk:
-                chunks.append(current_chunk.strip())
-                current_chunk = p + "\n\n"
-            else:
-                current_chunk += p + "\n\n"
-        if current_chunk:
-            chunks.append(current_chunk.strip())
+        start = 0
+        while start < len(text):
+            end = start + chunk_size
+            chunks.append(text[start:end].strip())
+            start += chunk_size - overlap
         return [c for c in chunks if c]
 
     def build_index(self, pack_id: str):
-        """Build the TF-IDF index for a pack's corpus."""
+        """Build the FAISS index for a pack's corpus."""
+        if not self.embedder or not faiss:
+            print("[Retrieval] Warning: FAISS or sentence-transformers not installed. Skipping RAG.")
+            self.indices[pack_id] = None
+            return
+
         corpus_path = os.path.join(self.pack_dir, f"{pack_id}_corpus.txt")
         if not os.path.exists(corpus_path):
             self.indices[pack_id] = None
@@ -44,16 +50,22 @@ class RetrievalEngine:
             self.indices[pack_id] = None
             return
 
-        vectorizer = TfidfVectorizer(stop_words='english')
+        # Generate embeddings
         try:
-            vectors = vectorizer.fit_transform(chunks)
+            embeddings = self.embedder.encode(chunks, convert_to_numpy=True)
+            dimension = embeddings.shape[1]
+            
+            # Create FAISS index (L2 distance)
+            index = faiss.IndexFlatL2(dimension)
+            index.add(embeddings)
+            
             self.indices[pack_id] = {
-                "vectorizer": vectorizer,
-                "vectors": vectors,
+                "index": index,
                 "chunks": chunks
             }
-        except ValueError:
-            # Handle empty vocabulary
+            print(f"[Retrieval] Built semantic index for {pack_id} with {len(chunks)} chunks.")
+        except Exception as e:
+            print(f"[Retrieval] Failed to build index for {pack_id}: {e}")
             self.indices[pack_id] = None
 
     def retrieve(self, pack_id: str, query: str, top_k: int = 2) -> List[str]:
@@ -62,24 +74,24 @@ class RetrievalEngine:
             self.build_index(pack_id)
             
         index_data = self.indices.get(pack_id)
-        if not index_data:
+        if not index_data or not self.embedder:
             return []
 
-        vectorizer = index_data["vectorizer"]
-        vectors = index_data["vectors"]
+        index = index_data["index"]
         chunks = index_data["chunks"]
 
         try:
-            query_vector = vectorizer.transform([query])
-            similarities = cosine_similarity(query_vector, vectors).flatten()
+            query_vector = self.embedder.encode([query], convert_to_numpy=True)
+            distances, top_indices = index.search(query_vector, top_k)
             
-            # Get indices of top_k results
-            if len(similarities) == 0 or np.max(similarities) == 0:
-                return []
-                
-            top_indices = similarities.argsort()[-top_k:][::-1]
-            return [chunks[i] for i in top_indices if similarities[i] > 0.05]
-        except Exception:
+            results = []
+            for i, idx in enumerate(top_indices[0]):
+                if idx >= 0 and idx < len(chunks):
+                    # distance is L2, lower is better. We can add thresholding if needed.
+                    results.append(chunks[idx])
+            return results
+        except Exception as e:
+            print(f"[Retrieval] Search failed for {pack_id}: {e}")
             return []
 
 # Global instance

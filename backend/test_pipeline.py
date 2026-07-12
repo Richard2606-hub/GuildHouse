@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from engine.loader import pack_loader
 from engine.session import session_manager
-from engine.config import FIREWORKS_API_KEY
+from engine.config import GEMINI_API_KEY, FIREWORKS_API_KEY
 
 
 async def main():
@@ -23,10 +23,18 @@ async def main():
     print("GuildHouse Pipeline Smoke Test")
     print("=" * 60)
 
+    if GEMINI_API_KEY:
+        print(f"[OK] Gemini API key found (ends with ...{GEMINI_API_KEY[-4:]})")
+    else:
+        print("[WARN] No GEMINI_API_KEY set")
+        
     if FIREWORKS_API_KEY:
         print(f"[OK] Fireworks API key found (ends with ...{FIREWORKS_API_KEY[-4:]})")
     else:
-        print("[WARN] No FIREWORKS_API_KEY set - will run in mock mode")
+        print("[WARN] No FIREWORKS_API_KEY set")
+        
+    if not GEMINI_API_KEY and not FIREWORKS_API_KEY:
+        print("[WARN] No API keys set - will run entirely in mock mode")
 
     # Load packs
     pack_loader.load_all_packs()

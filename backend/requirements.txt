@@ -6,3 +6,6 @@ python-dotenv
 scikit-learn
 numpy
 pydantic
+google-genai
+faiss-cpu
+sentence-transformers

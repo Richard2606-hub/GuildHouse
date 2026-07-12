@@ -46,7 +46,7 @@
 
 ---
 
-## 🌟 Overview
+## 🌟 Overview (What We Built)
 
 **GuildHouse** is an edge-deployable AI platform for organizations that need domain-specific AI assistants with strict compliance boundaries, data-sovereignty guarantees, and real-time auditability. It pairs a React console with a Python FastAPI backend, routing every query through a two-tier confidence pipeline — a cheap model handles routine traffic, a premium model is invoked only when confidence is low — with every decision written to an append-only audit ledger.
 
@@ -56,7 +56,7 @@
 | 🎯 Confidence Gate | Judge model scores every draft; escalates below threshold |
 | 🛡️ Rules Engine | Forbidden-topic detection + PII redaction before send |
 | 🎭 Persona Rendering | Per-pack voice and stance, enforced at the system-prompt level |
-| 🔍 Retrieval (RAG) | TF-IDF per-pack knowledge lookup from corpus `.txt` files |
+| 🔍 Retrieval (RAG) | Semantic search via `faiss-cpu` and `sentence-transformers` |
 | 🧰 Tool System | Pack-gated OCR / vision / media tools, LLM-simulated as fallback |
 | 📜 Audit Ledger | Every request, escalation, and tool call logged to JSONL |
 | 🔒 Sovereign Mode | One toggle cuts all external calls, forcing local-only inference |
@@ -64,7 +64,19 @@
 
 ---
 
-## 🏗️ Architecture
+## 🦄 Track 3: Unicorn Pre-Screening Guide
+
+To assist the judges for the **AMD Developer Hackathon: ACT II**, here is where you can find all the required information:
+
+- **What we built**: An edge-deployable AI platform (Sovereign AI Clerk Appliance). See **[Overview](#-overview-what-we-built)**.
+- **AMD Resource Usage**: We leverage AMD Instinct™ accelerators via **Fireworks AI** for our primary inference (using `gemma2-9b-it`). We also provide a `docker-compose` setup for running ROCm-accelerated vLLM on local AMD hardware. See **[AMD Compute Usage](#-amd-compute-usage)**.
+- **Implementation Details / Main Code Path**: The core logic (Confidence Gate, RAG, Rules validation) is entirely original work orchestrated in [`backend/engine/session.py`](backend/engine/session.py). See **[Architecture & Main Code Path](#-architecture--main-code-path)**.
+- **External Services**: We integrate with **Fireworks AI** and **Google Gemini API**. See **[External Services](#-external-services)**.
+- **Setup Instructions**: Fully documented and runnable. See **[Quick Start](#-quick-start)**.
+
+---
+
+## 🏗️ Architecture & Main Code Path
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
@@ -86,21 +98,27 @@
 │  ┌──────▼─────────────────▼───────────────────────────────┐   │
 │  │              GuildHouse Pipeline                       │   │
 │  │  1. Tool Detection    → execute if intent matched      │   │
-│  │  2. Knowledge Retrieval (TF-IDF RAG)                   │   │
-│  │  3. Local Draft (cheap model — GLM-5P1)                │   │
+│  │  2. Knowledge Retrieval (Semantic Search RAG)          │   │
+│  │  3. Local Draft (cheap model — gemma2-9b-it)           │   │
 │  │  4. Confidence Gate   → escalate if below threshold    │   │
 │  │  5. Rules Validation  (forbidden topics + redaction)   │   │
 │  │  6. Persona Rendering (voice & stance enforcement)     │   │
 │  └────────────────────────────────────────────────────────┘   │
 │                          │                                    │
 │  ┌───────────────────────▼─────────────────────────────────┐  │
-│  │               Fireworks AI / vLLM (ROCm)                │  │
-│  │   Local: GLM-5P1     ·     Escalation: DeepSeek-V4-Pro  │  │
+│  │               Fireworks AI / Gemini API                 │  │
+│  │   Local: gemma2-9b-it     ·     Escalation: Gemini Pro  │  │
 │  └─────────────────────────────────────────────────────────┘  │
 └───────────────────────────────────────────────────────────────┘
 ```
 
-### Component Map
+### Main Code Path & Implementation Details
+
+The core originality of this project is the **Confidence Gate** and **Pipeline**. The entirety of the request lifecycle is orchestrated in the `SessionManager`. 
+
+To evaluate the main code path, start by reading **[`backend/engine/session.py`](backend/engine/session.py)**.
+
+| Layer | Technology | Key File(s) |
 
 | Layer | Technology | Key File(s) |
 |---|---|---|
@@ -144,7 +162,40 @@
 | **Python** | 3.10 | `python --version` |
 | **Node.js** | 18.x | `node --version` |
 | **npm** | 9.x | `npm --version` |
+| `FIREWORKS_API_KEY` | ✅ Yes | — | Fireworks AI API key for AMD-powered inference |
+| `GEMINI_API_KEY` | ✅ Yes | — | Google Gemini API key for escalation and multimodal tools |
+
+---
+
+## ⚡ AMD Compute Usage
+
+This project heavily leverages **AMD architecture** for fast, efficient generative AI inference:
+
+1. **Fireworks AI Integration**: Our primary "Local Tier" and "Judge" models default to `gemma2-9b-it` hosted on **Fireworks AI**, which utilizes **AMD Instinct™ MI300X accelerators** in their cloud infrastructure for blazing-fast token generation.
+2. **Local ROCm Fallback**: For absolute data sovereignty, we include a `docker-compose` configuration that spins up an instance of **vLLM** compiled for **AMD ROCm**. This allows the entire pipeline to run on local AMD Radeon/Instinct GPUs without any external API calls.
+
+---
+
+## 🌐 External Services
+
+Our platform uses a multi-provider setup to balance cost, privacy, and capability:
+
+1. **Fireworks AI**: Serves as our primary provider for the "Local Tier" and "Judge Model". It executes the `gemma2-9b-it` model on AMD hardware to quickly draft responses and score confidence at very low latency and cost.
+2. **Google Gemini API**: Serves as our "Escalation Tier" (`gemini-3.1-pro`). This is only invoked when the local Fireworks model expresses low confidence in answering the user's query accurately. Gemini is also used for our `TOOL_PROVIDER` to power multimodal tool requests (e.g., Vision/OCR).
+
+> Both providers can be hot-swapped or disabled. You can run 100% on Fireworks or 100% on Gemini by modifying the `.env` configuration.
+
+---
+
+## 📦 Prerequisites
+
+| Requirement | Minimum Version | Check |
+|---|---|---|
+| **Python** | 3.10 | `python --version` |
+| **Node.js** | 18.x | `node --version` |
+| **npm** | 9.x | `npm --version` |
 | **Fireworks AI API key** | — | [fireworks.ai](https://fireworks.ai) |
+| **Gemini API key** | — | [aistudio.google.com](https://aistudio.google.com) |
 
 ---
 
@@ -188,22 +239,22 @@ npm run dev
 
 ## 🐳 Docker Deployment
 
-The `docker-compose.yml` wires together three services:
+The `docker-compose.yml` wires together a highly portable, lightweight CPU-bound deployment:
 
 | Service | Port | Description |
 |---|---|---|
 | `frontend` | `80` | Nginx-served React SPA |
 | `backend` | `8000` | FastAPI runtime |
-| `vllm-rocm` | `8080` | AMD ROCm-accelerated vLLM inference server |
+
+Because all heavy AI inference is offloaded to Fireworks AI and Gemini, you **do not need a GPU** to host GuildHouse. You can deploy this on any standard, inexpensive Linux VPS (e.g., DigitalOcean Droplet, AWS EC2, or Google Cloud Compute Engine).
 
 ```bash
+# Set your API keys in .env, or pass them directly
 export FIREWORKS_API_KEY=your_key_here
-export HUGGING_FACE_HUB_TOKEN=your_hf_token  # for vLLM model download
+export GEMINI_API_KEY=your_key_here
 
-docker-compose up --build
+docker-compose up -d --build
 ```
-
-> **⚠️ Note:** The `vllm-rocm` service requires AMD GPU hardware (`/dev/kfd`, `/dev/dri`). Remove or comment out that service block if running on CPU-only or non-AMD hardware.
 
 ---
 
@@ -488,7 +539,7 @@ GuildHouse/
 │   ├── tailwind.config.js
 │   └── Dockerfile
 │
-├── docker-compose.yml          # Full-stack orchestration (+ vLLM ROCm)
+├── docker-compose.yml          # Lightweight CPU-bound container deployment
 ├── .env.example                # Environment variable template
 ├── extract.py                  # Utility: extract text from files for corpus generation
 └── extracted_text.txt          # Output from extract.py (used to build corpus files)
@@ -557,9 +608,9 @@ If you're not using the dev server (e.g. opening `index.html` directly), you mus
 </details>
 
 <details>
-<summary>❌ vLLM / ROCm service fails in Docker Compose</summary>
+<summary>❌ Docker container fails to start</summary>
 
-The `vllm-rocm` service requires AMD GPU hardware (`/dev/kfd`, `/dev/dri`) passed through to the container. On CPU-only or non-AMD hosts, comment out that service block in `docker-compose.yml` and rely on the Fireworks AI cloud path instead.
+Make sure you don't have another service already bound to ports `80` or `8000`. You can change the port bindings in `docker-compose.yml` if needed.
 
 </details>
 

@@ -39,7 +39,7 @@ export default function App() {
   const tourSteps = {
     1: {
       title: "🏰 Welcome to GuildHouse",
-      text: "This is a Sovereign AI Clerk Appliance powered by AMD ROCm hardware. Let's take a 45-second tour of the main features.",
+      text: "This is a Sovereign AI Clerk Appliance powered by AMD hardware. Let's take a 45-second tour of the main features.",
       pos: "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
     },
     2: {
