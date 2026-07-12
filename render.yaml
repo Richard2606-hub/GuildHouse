@@ -7,5 +7,21 @@ services:
     envVars:
       - key: FIREWORKS_API_KEY
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: LOCAL_PROVIDER
+        value: fireworks
+      - key: ESCALATION_PROVIDER
+        value: gemini
+      - key: JUDGE_PROVIDER
+        value: fireworks
+      - key: TOOL_PROVIDER
+        value: gemini
       - key: LOCAL_MODEL
         value: accounts/fireworks/models/glm-5p1
+      - key: ESCALATION_MODEL
+        value: gemini-3.1-flash-lite
+      - key: JUDGE_MODEL
+        value: accounts/fireworks/models/glm-5p1
+      - key: ESCALATION_THRESHOLD
+        value: "0.7"
