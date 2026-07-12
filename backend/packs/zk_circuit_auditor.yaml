@@ -17,3 +17,6 @@ rules:
 - Flag unconstrained variables
 tools:
 - vision
+suggested_prompts:
+- Audit this Circom circuit
+- Check for underconstrained signals

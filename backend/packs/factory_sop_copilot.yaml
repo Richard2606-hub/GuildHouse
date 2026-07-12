@@ -17,3 +17,6 @@ rules:
 tools:
 - vision
 - ocr
+suggested_prompts:
+- Show me the safety checklist
+- How do I restart the conveyor?

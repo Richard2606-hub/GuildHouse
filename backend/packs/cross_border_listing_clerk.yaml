@@ -19,3 +19,6 @@ rules:
 - Ensure HS codes are formatted correctly
 tools:
 - ocr
+suggested_prompts:
+- List my product in Singapore
+- What are the import duties?

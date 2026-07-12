@@ -17,3 +17,6 @@ rules:
 - Refuse to identify non-agricultural plants
 tools:
 - vision
+suggested_prompts:
+- Analyze my crop photo
+- What causes yellowing leaves?

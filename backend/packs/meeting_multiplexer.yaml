@@ -17,3 +17,6 @@ rules:
 - Separate technical notes from business summaries
 tools:
 - media_pipeline
+suggested_prompts:
+- Summarize the latest meeting
+- Extract action items

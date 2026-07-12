@@ -15,3 +15,6 @@ rules:
 - Provide ROCm equivalents for CUDA APIs
 tools:
 - ocr
+suggested_prompts:
+- Convert this CUDA code to HIP
+- How to optimize for ROCm?

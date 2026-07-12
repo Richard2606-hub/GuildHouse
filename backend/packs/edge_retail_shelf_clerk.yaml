@@ -16,3 +16,6 @@ rules:
 - Compare actual shelf to planogram
 tools:
 - vision
+suggested_prompts:
+- Check inventory for SKU 123
+- Are there any out of stock items?

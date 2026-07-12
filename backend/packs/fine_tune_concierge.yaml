@@ -14,3 +14,6 @@ rules:
 - Recommend LoRA for parameter efficiency
 - Specify AMD ROCm docker images
 tools: []
+suggested_prompts:
+- Help me tune a model
+- What dataset format is needed?
