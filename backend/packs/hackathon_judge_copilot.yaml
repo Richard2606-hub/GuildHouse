@@ -17,3 +17,6 @@ rules:
 tools:
 - vision
 - media_pipeline
+suggested_prompts:
+- Evaluate this project on innovation
+- What is the scoring criteria?

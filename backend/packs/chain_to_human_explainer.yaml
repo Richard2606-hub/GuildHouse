@@ -16,3 +16,6 @@ rules:
 - Never predict asset prices
 - Explain transaction hashes clearly
 tools: []
+suggested_prompts:
+- Explain this blockchain transaction
+- What does this smart contract do?

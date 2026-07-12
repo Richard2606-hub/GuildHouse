@@ -39,27 +39,27 @@ export default function App() {
   const tourSteps = {
     1: {
       title: "🏰 Welcome to GuildHouse",
-      text: "This is a Sovereign AI Clerk Appliance powered by AMD hardware. Let's take a 45-second tour of the main features.",
+      text: "Welcome to GuildHouse. Let's take a quick 45-second tour of your new local, privacy-first AI workspace powered by AMD.",
       pos: "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
     },
     2: {
       title: "💬 Live Clerk Console",
-      text: "Select a capability pack in the dropdown and converse with the clerk. You can click 'Simulate File' below to test local Vision/OCR tool pipelines (like receipts and video processing).",
+      text: "Choose an AI Clerk from the top dropdown to start chatting. Try clicking a 'Useful Skill' below to instantly test how they process images and documents!",
       pos: "bottom-4 left-1/2 -translate-x-1/2 md:bottom-32 md:right-12 md:left-auto md:translate-x-0"
     },
     3: {
       title: "🔒 Strict Sovereign Switch",
-      text: "Toggle the Sovereign Switch in the sidebar card to cut off external APIs completely. Sending a complex prompt with Sovereign Mode active forces a secure local fallback, preventing unredacted data leaks under PDPA.",
+      text: "Need ultimate privacy? Toggle the Sovereign Switch to completely cut off the cloud. All complex tasks will be safely processed on your local hardware to guarantee zero data leaks.",
       pos: "bottom-4 left-1/2 -translate-x-1/2 md:bottom-12 md:left-72 md:translate-x-0"
     },
     4: {
       title: "📖 Audit Ledger & compliance",
-      text: "Check compliance ledger records to verify redacted boundary crossings, or check cost vitals tracking Fireworks AI API spend against the shared $50 cap.",
+      text: "Transparency is key. The Audit Ledger tracks exactly what data was sent to the cloud, and monitors your real-time API spending so you never get surprise bills.",
       pos: "top-24 left-1/2 -translate-x-1/2"
     },
     5: {
       title: "🛠️ Hot-Reload Pack Studio",
-      text: "Open any installed pack file, edit validation rules directly in YAML, and click Hot-Reload to swap active configurations in memory in real-time.",
+      text: "No coding required! Edit your AI's rules directly in the Pack Studio and click 'Hot-Reload' to update their behavior instantly without restarting the app.",
       pos: "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
     }
   };

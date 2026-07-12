@@ -536,21 +536,40 @@ export default function Console() {
       {/* Input Area / Action Panel */}
       <div className="p-6 bg-[#161b22] border-t border-[#30363d] shrink-0">
         <div className="max-w-4xl mx-auto space-y-4">
-          {/* Simulated File Upload Shortcuts */}
-          {mockFiles[selectedPack] && (
-            <div className="flex gap-2 flex-wrap items-center">
-              <span className="text-[10px] text-[#8b949e] uppercase font-bold tracking-wider mr-2">Simulate File:</span>
-              {mockFiles[selectedPack].map((file) => (
-                <button
-                  key={file.name}
-                  onClick={() => handleMockUpload(file)}
-                  className="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] hover:border-[#8b949e] text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5"
-                >
-                  {file.label}
-                </button>
-              ))}
-            </div>
-          )}
+          
+          {/* Simulated File Upload Shortcuts & Suggested Prompts Container */}
+          <div className="flex flex-col gap-3">
+            {mockFiles[selectedPack] && (
+              <div className="flex gap-2 flex-wrap items-center">
+                <span className="text-[10px] text-[#8b949e] uppercase font-bold tracking-wider mr-2">Simulate File:</span>
+                {mockFiles[selectedPack].map((file) => (
+                  <button
+                    key={file.name}
+                    onClick={() => handleMockUpload(file)}
+                    className="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] hover:border-[#8b949e] text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5"
+                  >
+                    {file.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Useful Skills / Suggested Prompts */}
+            {packs.find(p => p.name.toLowerCase().replaceAll(' ', '_') === selectedPack)?.suggested_prompts?.length > 0 && (
+              <div className="flex gap-2 flex-wrap items-center">
+                <span className="text-[10px] text-[#8b949e] uppercase font-bold tracking-wider mr-2">Useful Skills:</span>
+                {packs.find(p => p.name.toLowerCase().replaceAll(' ', '_') === selectedPack).suggested_prompts.map((prompt, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => handleSend(prompt)}
+                    className="bg-transparent hover:bg-[#238636]/10 border border-[#30363d] hover:border-[#2ea043] text-[#8b949e] hover:text-[#2ea043] text-xs font-semibold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    ⚡ {prompt}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Prompt Entry */}
           <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="flex gap-2 sm:gap-4">

@@ -20,3 +20,6 @@ rules:
 - Never confirm appointments without schedule check
 tools:
 - ocr
+suggested_prompts:
+- Book an appointment
+- What are the clinic hours?

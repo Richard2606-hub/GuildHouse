@@ -22,7 +22,7 @@ TOOL_PROVIDER = os.getenv("TOOL_PROVIDER", "gemini")
 LOCAL_MODEL = os.getenv("LOCAL_MODEL", "accounts/fireworks/models/gemma2-9b-it")
 
 # Escalation tier: larger, more capable model (the "guild expert")
-ESCALATION_MODEL = os.getenv("ESCALATION_MODEL", "gemini-3.1-pro")
+ESCALATION_MODEL = os.getenv("ESCALATION_MODEL", "gemini-3.1-flash-lite")
 
 # Confidence assessment model (small and fast)
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "accounts/fireworks/models/gemma2-9b-it")

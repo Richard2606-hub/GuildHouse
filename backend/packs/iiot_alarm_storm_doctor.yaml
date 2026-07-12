@@ -16,3 +16,6 @@ rules:
 - Ignore sympathetic cascade alarms
 tools:
 - media_pipeline
+suggested_prompts:
+- Diagnose the pressure alarm
+- Is there a cascade failure?

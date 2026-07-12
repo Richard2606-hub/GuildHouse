@@ -20,3 +20,6 @@ rules:
 tools:
 - ocr
 - vision
+suggested_prompts:
+- Summarize the termination clause
+- What are my rights as a tenant?
